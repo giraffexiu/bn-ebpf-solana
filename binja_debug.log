@@ -1,0 +1,78 @@
+[0:12666089206486498730 Core info] Loaded native plugin cryptoplugin
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libcryptoplugin.dylib
+[0:12666089206486498730 Core info] Loaded native plugin dwarf_export
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libdwarf_export.dylib
+[0:12666089206486498730 Core info] Loaded native plugin dwarf_import
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libdwarf_import.dylib
+[0:12666089206486498730 Core info] Loaded native plugin idb_import
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libidb_import.dylib
+[0:12666089206486498730 Core info] Loaded native plugin lang_pseudoc
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/liblang_pseudoc.dylib
+[0:12666089206486498730 Core info] Loaded native plugin lang_pseudorust
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/liblang_pseudorust.dylib
+[0:12666089206486498730 Core info] Loaded native plugin msvc_rtti
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libmsvc_rtti.dylib
+[0:0 Default info] Shared Cache processing initialized with a max file pointer limit of 0x80
+[0:12666089206486498730 Core info] Loaded native plugin sharedcache
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libsharedcache.dylib
+[0:12666089206486498730 Core info] Loaded native plugin view_elf
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libview_elf.dylib
+[0:12666089206486498730 Core info] Loaded native plugin view_macho
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libview_macho.dylib
+[0:12666089206486498730 Core info] Loaded native plugin view_md1rom
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libview_md1rom.dylib
+[0:12666089206486498730 Core info] Loaded native plugin view_pe
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libview_pe.dylib
+[0:12666089206486498730 Core info] Loaded native plugin arch_arm64
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libarch_arm64.dylib
+[0:12666089206486498730 Core info] Loaded native plugin arch_armv7
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libarch_armv7.dylib
+[0:12666089206486498730 Core info] Loaded native plugin arch_mips
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libarch_mips.dylib
+[0:12666089206486498730 Core info] Loaded native plugin arch_msp430
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libarch_msp430.dylib
+[0:12666089206486498730 Core info] Loaded native plugin arch_ppc
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libarch_ppc.dylib
+[0:12666089206486498730 Core info] Loaded native plugin arch_riscv
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libarch_riscv.dylib
+[0:12666089206486498730 Core info] Loaded native plugin arch_x86
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libarch_x86.dylib
+[0:12666089206486498730 Core info] Loaded native plugin pdb_import_plugin
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libpdb_import_plugin.dylib
+[0:12666089206486498730 Core info] Loaded native plugin platform_decree
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libplatform_decree.dylib
+[0:12666089206486498730 Core info] Loaded native plugin platform_efi
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libplatform_efi.dylib
+[0:12666089206486498730 Core info] Loaded native plugin platform_freebsd
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libplatform_freebsd.dylib
+[0:12666089206486498730 Core info] Loaded native plugin platform_linux
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libplatform_linux.dylib
+[0:12666089206486498730 Core info] Loaded native plugin platform_mac
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libplatform_mac.dylib
+[0:12666089206486498730 Core info] Loaded native plugin platform_windows
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libplatform_windows.dylib
+[0:12666089206486498730 Core info] Loaded native plugin platform_windows_kernel
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libplatform_windows_kernel.dylib
+[0:12666089206486498730 Core info] Loaded native plugin workflow_objc
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libworkflow_objc.dylib
+[0:0 Default debug] Native debugger loaded!
+[0:12666089206486498730 Core info] Loaded native plugin debuggercore
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libdebuggercore.dylib
+[0:12666089206486498730 PythonPlugin debug] preparing to initialize
+[0:12666089206486498730 PythonPlugin debug] setting python home to '../../Resources/bundled-python3'
+[0:12666089206486498730 PythonPlugin debug] using path '/Applications/Binary Ninja.app/Contents/MacOS/plugins/../../Resources/bundled-python3/lib/python310.zip:/Applications/Binary Ninja.app/Contents/MacOS/plugins/../../Resources/bundled-python3/lib/python3.10:/Applications/Binary Ninja.app/Contents/MacOS/plugins/../../Resources/bundled-python3/lib/python3.10/lib-dynload'
+[0:12666089206486498730 PythonPlugin debug] initialized
+[0:12666089206486498730 PythonPlugin debug] importing binaryninja
+[0:12666089206486498730 PythonPlugin debug] redirecting stdio
+[0:12666089206486498730 PythonPlugin info] Loaded python3 plugin 'bn-ebpf-solana'
+[0:8541930816 Default info] Binary Ninja MCP plugin loaded successfully
+[0:12666089206486498730 Plugin Repository: community info] Loaded python3 plugin 'fosdickio_binary_ninja_mcp'
+[0:12666089206486498730 Core info] Loaded native plugin pythonplugin
+[0:12666089206486498730 Core debug] Plugin Path: /Applications/Binary Ninja.app/Contents/MacOS/plugins/libpythonplugin.dylib
+[0:12666089206486498730 Core info] Loaded UI plugin debuggerui
+[0:12666089206486498730 Core debug] Path: 
+[0:12666089206486498730 Core info] Loaded UI plugin sharedcacheui
+[0:12666089206486498730 Core debug] Path: 
+[0:12666089206486498730 Core info] Loaded UI plugin triage
+[0:12666089206486498730 Core debug] Path: 
+[0:0 Default error] Failed to get update info: Update authentication failed: License not found.

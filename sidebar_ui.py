@@ -49,15 +49,11 @@ DEFAULT_RPC = "https://api.mainnet-beta.solana.com"
 
 base_path = Path(__file__).parent.parent
 
-SERVER_PATH = next(
-    (mcp_dir / "bridge" / "binja_mcp_bridge.py"
-     for mcp_dir in base_path.glob("*binary_ninja_mcp")
-     if (mcp_dir / "bridge" / "binja_mcp_bridge.py").exists()),
-    None
-)
+# Direct path to binary_ninja_mcp plugin
+SERVER_PATH = base_path.parent / "repositories" / "community" / "plugins" / "fosdickio_binary_ninja_mcp" / "bridge" / "binja_mcp_bridge.py"
 
-if SERVER_PATH is None:
-    raise FileNotFoundError("Did you install binary_ninja_mcp via Git or the plugin manager?")
+if not SERVER_PATH.exists():
+    raise FileNotFoundError(f"Could not find binary_ninja_mcp bridge at {SERVER_PATH}. Please ensure the plugin is installed.")
 
 #settings
 
