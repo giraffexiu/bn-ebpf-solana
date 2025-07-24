@@ -18,3 +18,6 @@ solana.register('Solana')
 
 from .solanaview import SolanaView
 SolanaView.register()
+
+# 导入侧边栏UI模块以注册LLM反编译面板
+from . import sidebar_ui

@@ -20,10 +20,13 @@ from typing import Any, Dict
 from anthropic import Anthropic, AuthenticationError, RateLimitError, APIStatusError
 from fastmcp import exceptions as mcp_exc
 from tenacity import retry, stop_after_attempt, wait_random_exponential
+from google import genai
+from google.genai import types as genai_types
 
 import sys, os
 
 from .idl_utils import fetch_idl_anchorpy
+from .direct_api_interface import DirectAPIInterface
 
 # binja screws up stdout and stderr, fastmcp doesnt like that
 def _safe_fd():
@@ -47,19 +50,23 @@ from .mcp_utils import *
 
 DEFAULT_RPC = "https://api.mainnet-beta.solana.com"
 
-base_path = Path(__file__).parent.parent
 
-# Direct path to binary_ninja_mcp plugin
-SERVER_PATH = base_path.parent / "repositories" / "community" / "plugins" / "fosdickio_binary_ninja_mcp" / "bridge" / "binja_mcp_bridge.py"
+# 使用直接API接口替代MCP客户端
+# SERVER_PATH = Path(__file__).parent / "binja_mcp_bridge_direct.py"  # 不再需要
 
-if not SERVER_PATH.exists():
-    raise FileNotFoundError(f"Could not find binary_ninja_mcp bridge at {SERVER_PATH}. Please ensure the plugin is installed.")
+# 不再需要动态导入MCP桥接模块
+# import importlib.util
+# spec = importlib.util.spec_from_file_location("binja_mcp_bridge_direct", SERVER_PATH)
+# binja_mcp_direct = importlib.util.module_from_spec(spec)
+# spec.loader.exec_module(binja_mcp_direct)
 
 #settings
 
 settings = Settings()
 setting_props = properties = f'{{"title" : "Anthropic API Key", "description" : "Your Anthropic API key for LLM requests", "type" : "string", "default" : ""}}'
 setting_props_2 = properties = f'{{"title" : "Context for Solana MCP", "description" : "Absolute path to extra context to be provided, like an IDL", "type" : "string", "default" : ""}}'
+setting_props_3 = properties = f'{{"title" : "Gemini API Key", "description" : "Your Google Gemini API key for LLM requests", "type" : "string", "default" : ""}}'
+setting_props_4 = properties = f'{{"title" : "LLM Provider", "description" : "Choose between Claude and Gemini", "type" : "string", "default" : "claude", "enum" : ["claude", "gemini"]}}'
 settings.register_group("bn-ebpf-solana", "MCP settings")
 settings.register_setting(
     "bn-ebpf-solana.context",           # identifier
@@ -69,14 +76,28 @@ settings.register_setting(
     "bn-ebpf-solana.anthropic_api_key",           # identifier
     setting_props
 )
+settings.register_setting(
+    "bn-ebpf-solana.gemini_api_key",           # identifier
+    setting_props_3
+)
+settings.register_setting(
+    "bn-ebpf-solana.llm_provider",           # identifier
+    setting_props_4
+)
 
 
-class ClaudeRunner(BackgroundTaskThread):
+class LLMRunner(BackgroundTaskThread):
     def __init__(self, bar):
-        super().__init__("Prompting Claude for Rust (running)…", can_cancel=True)
+        provider = settings.get_string("bn-ebpf-solana.llm_provider")
+        super().__init__(f"Prompting {provider.title()} for Rust (running)…", can_cancel=True)
         self.bar = bar
         self.func        = bar.f
         self.idl = bar.idl
+        self.provider = provider
+
+class ClaudeRunner(LLMRunner):
+    def __init__(self, bar):
+        super().__init__(bar)
 
     def run(self):
         """
@@ -124,54 +145,66 @@ class ClaudeRunner(BackgroundTaskThread):
         if not api_key.startswith("sk-"):
             return "Please set your Anthropic API key in the plugin settings"
 
-        # we rely on a forked version of the existing plugin to implement an mcp server
-        # how do we reliably get its location?
-        async with Client(PythonStdioTransport(SERVER_PATH)) as cli:
-            tools = await cli.list_tools()
-            specs = [mcp_to_anthropic(t) for t in tools]
+        # 使用直接API接口
+        api_interface = DirectAPIInterface(self.bar.bv)
+        tools = api_interface.get_available_tools()
+        specs = [mcp_to_anthropic(t) for t in tools]
 
-            msgs: list[Dict[str, Any]] = [{
-                "role":    "user",
-                "content": f"Improve the quality of decompilation inside binary ninja of {self.func.name} using all tools at your disposal"
-            },
-            {
-              "role": "user",
-              "content": "Here is the IDL interface file : " + self.idl if self.idl else ""
-            }
-            ]
+        msgs: list[Dict[str, Any]] = [{
+             "role":    "user",
+             "content": f"Improve the quality of decompilation inside binary ninja of {self.func.name} using all tools at your disposal"
+         },
+         {
+           "role": "user",
+           "content": "Here is the IDL interface file : " + self.idl if self.idl else ""
+         }
+         ]
 
-            for _ in range(50):                        # safety cap
-                reply = await self._call_claude(specs, msgs, api_key)
-                tool_calls = [b for b in reply.content if b.type == "tool_use"]
+        for _ in range(50):                        # safety cap
+             reply = await self._call_claude(specs, msgs, api_key)
+             tool_calls = [b for b in reply.content if b.type == "tool_use"]
 
-                # llm doesnt wanna call any tools anymore
-                if not tool_calls:
-                    final = "".join(b.text for b in reply.content if b.type == "text")
-                    # claude is dumb and sometimes still inserts comments before code
-                    if "```" in final:
-                        return final[final.index("```"):]
-                    if "pub fn" in final:
-                        return final[final.index("pub fn"):]
-                    return final
+             # llm doesnt wanna call any tools anymore
+             if not tool_calls:
+                 final = "".join(b.text for b in reply.content if b.type == "text")
+                 # claude is dumb and sometimes still inserts comments before code
+                 if "```" in final:
+                     # Extract code content without the ``` markers
+                     start_idx = final.index("```")
+                     # Find the end of the opening ``` line
+                     newline_idx = final.find("\n", start_idx)
+                     if newline_idx != -1:
+                         code_start = newline_idx + 1
+                         # Find the closing ```
+                         end_idx = final.find("```", code_start)
+                         if end_idx != -1:
+                             return final[code_start:end_idx].strip()
+                         else:
+                             return final[code_start:].strip()
+                     else:
+                         return final[start_idx + 3:].strip()
+                 if "pub fn" in final:
+                     return final[final.index("pub fn"):]
+                 return final
 
-                # tool calls
-                results: list[Dict[str, Any]] = []
-                for call in tool_calls:
-                    try:
-                        res = await cli.call_tool(call.name, call.input)
-                        payload = json.dumps(blocks_to_str(res), ensure_ascii=False)
-                    except mcp_exc.MCPError as e:      # bad args, runtime error, etc.
-                        payload = json.dumps({"error": str(e)}, ensure_ascii=False)
+             # tool calls
+             results: list[Dict[str, Any]] = []
+             for call in tool_calls:
+                 try:
+                     res = api_interface.call_tool(call.name, **call.input)
+                     payload = json.dumps(blocks_to_str(res), ensure_ascii=False)
+                 except Exception as e:      # bad args, runtime error, etc.
+                     payload = json.dumps({"error": str(e)}, ensure_ascii=False)
 
-                    results.append({
-                        "type":        "tool_result",
-                        "tool_use_id": call.id,
-                        "content":     payload,
-                    })
+                 results.append({
+                     "type":        "tool_result",
+                     "tool_use_id": call.id,
+                     "content":     payload,
+                 })
 
-                # ---------- feed results back to Claude ----------
-                msgs.append({"role": "assistant", "content": reply.content})
-                msgs.append({"role": "user",      "content": results})
+             # ---------- feed results back to Claude ----------
+             msgs.append({"role": "assistant", "content": reply.content})
+             msgs.append({"role": "user",      "content": results})
 
         raise RuntimeError("LLM never produced final text")
 
@@ -203,6 +236,97 @@ class ClaudeRunner(BackgroundTaskThread):
             max_tokens   = 1_200,
             temperature  = 0.3,
         )
+
+class GeminiRunner(LLMRunner):
+    def __init__(self, bar):
+        super().__init__(bar)
+
+    def run(self):
+        """BackgroundTaskThread entry-point for Gemini."""
+        pretty_text = ""
+
+        try:
+            # actual async work
+            pretty_text = asyncio.run(self._extract_rust_gemini())
+
+        # ───── expected user-side failures ───────────────────────────────────
+        except Exception as exc:
+            if "API_KEY" in str(exc) or "authentication" in str(exc).lower():
+                pretty_text = f"LLM disabled: bad Gemini API key ({exc})"
+            elif "mcp" in str(exc).lower():
+                pretty_text = f"LLM disabled: MCP bridge error ({exc})"
+            else:
+                pretty_text = f"LLM disabled: {type(exc).__name__}: {exc}"
+
+        # ───── always update the sidebar on UI thread ───────────────────────
+        finally:
+            execute_on_main_thread(
+                lambda: self.bar.update_ui_func(self.func, pretty_text)
+            )
+
+    async def _extract_rust_gemini(self) -> str:
+        if not self.func:
+            return ""
+
+        api_key = settings.get_string("bn-ebpf-solana.gemini_api_key")
+
+        if not api_key:
+            return "Please set your Gemini API key in the plugin settings"
+
+        gemini_client = genai.Client(api_key=api_key)
+
+        # Get extra context
+        extra_context_path = settings.get_string("bn-ebpf-solana.context")
+        extra_context = ""
+        if extra_context_path != "":
+            with open(extra_context_path) as f:
+                extra_context = f.read()
+
+        system_prompt = open(Path(__file__).parent / "system.txt").read() + extra_context
+
+        # Build the prompt
+        prompt_content = f"Improve the quality of decompilation inside binary ninja of {self.func.name} using all tools at your disposal"
+        if self.idl:
+            prompt_content += f"\n\nHere is the IDL interface file: {self.idl}"
+
+        # 使用直接API接口
+        api_interface = DirectAPIInterface(self.bar.bv)
+        
+        # Use direct API with Gemini
+        response = await gemini_client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt_content,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.3,
+                max_output_tokens=1200
+            )
+        )
+        
+        # Extract text from response
+        if hasattr(response, 'text') and response.text:
+            final = response.text
+            # Clean up response similar to Claude
+            if "```" in final:
+                # Extract code content without the ``` markers
+                start_idx = final.index("```")
+                # Find the end of the opening ``` line
+                newline_idx = final.find("\n", start_idx)
+                if newline_idx != -1:
+                    code_start = newline_idx + 1
+                    # Find the closing ```
+                    end_idx = final.find("```", code_start)
+                    if end_idx != -1:
+                        return final[code_start:end_idx].strip()
+                    else:
+                        return final[code_start:].strip()
+                else:
+                    return final[start_idx + 3:].strip()
+            if "pub fn" in final:
+                return final[final.index("pub fn"):]
+            return final
+        else:
+            return "No response generated from Gemini"
 
 class LLMDecompSidebarWidget(SidebarWidget):
 
@@ -325,8 +449,12 @@ class LLMDecompSidebarWidget(SidebarWidget):
             self.update_ui_func(func, self.cache[func.name])
             return
 
-        # ── Kick off background Claude job ───────────────────────────────────────
-        task = ClaudeRunner(self)
+        # ── Kick off background LLM job ───────────────────────────────────────
+        provider = settings.get_string("bn-ebpf-solana.llm_provider")
+        if provider == "gemini":
+            task = GeminiRunner(self)
+        else:
+            task = ClaudeRunner(self)
         task.start()
 
     def contextMenuEvent(self, event):
@@ -347,7 +475,7 @@ class LLMDecompSidebarWidgetType(SidebarWidgetType):
         painter.drawText(QRectF(0, 0, 56, 56), Qt.AlignCenter, "R")
         painter.end()
 
-        super().__init__(icon, "LLM reconstructed Rust")
+        super().__init__(icon, "AI reconstructed Rust (Claude/Gemini)")
 
     def createWidget(self, frame, data):
         # frame: a ViewFrameRef, data: BinaryViewRef or None

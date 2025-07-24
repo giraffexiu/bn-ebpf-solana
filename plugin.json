@@ -3,7 +3,8 @@
     "name": "bn-ebpf-solana",
     "type": [
         "architecture",
-        "binaryview"
+        "binaryview",
+        "ui"
     ],
     "api": [
         "python3"
@@ -28,7 +29,9 @@
             "anchorpy",
             "solana",
             "solders",
-            "base58"
+            "base58",
+            "anthropic",
+            "google-genai"
         ]
     },
     "installinstructions": {
