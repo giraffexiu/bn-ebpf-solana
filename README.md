@@ -47,10 +47,22 @@ A comprehensive Binary Ninja plugin for analyzing eBPF and Solana programs. This
    git clone https://github.com/your-repo/bn-ebpf-solana.git
    ```
 
-2. Install required Python dependencies:
-   ```bash
-   pip install anchorpy solders anthropic google-generativeai
-   ```
+2. Install required Python dependencies in Binary Ninja:
+   - Open Binary Ninja
+   - Press `Cmd+P` (or `Ctrl+P` on Windows/Linux) to open the command palette
+   - Type "Install python3 module" and select it
+   - Install the following modules one by one:
+     - `lief`
+     - `anthropic`
+     - `fastmcp`
+     - `tenacity`
+     - `rust_demangler`
+     - `pygments`
+     - `anchorpy`
+     - `solana`
+     - `solders`
+     - `base58`
+     - `google-genai`
 
 3. Restart Binary Ninja to load the plugin
 
@@ -82,6 +94,7 @@ The plugin includes predefined Solana types in `types.c` for enhanced analysis.
 
 ### File Structure
 
+#### Core Plugin Files
 - `__init__.py` - Plugin initialization and registration
 - `ebpf.py` - eBPF architecture implementation
 - `solana.py` - Solana platform definition
@@ -92,6 +105,14 @@ The plugin includes predefined Solana types in `types.c` for enhanced analysis.
 - `direct_api_interface.py` - Direct API access layer
 - `mcp_utils.py` - MCP protocol utilities
 - `types.c` - Solana-specific type definitions
+
+#### Configuration Files
+- `plugin.json` - Binary Ninja plugin metadata
+
+#### AI/LLM Integration Files
+- `system.txt` - System prompt for BinjaBot AI assistant with Solana/Anchor type definitions
+- `context.txt` - MCP (Model Context Protocol) architecture documentation
+- `binja_mcp_bridge_direct.py` - MCP bridge implementation for direct API access
 
 ### Contributing
 
@@ -146,10 +167,22 @@ This project is licensed under the MIT License.
    git clone https://github.com/your-repo/bn-ebpf-solana.git
    ```
 
-2. 安装所需的 Python 依赖：
-   ```bash
-   pip install anchorpy solders anthropic google-generativeai
-   ```
+2. 在 Binary Ninja 中安装所需的 Python 依赖：
+   - 打开 Binary Ninja
+   - 按 `Cmd+P`（Windows/Linux 上为 `Ctrl+P`）打开命令面板
+   - 输入 "Install python3 module" 并选择
+   - 逐个安装以下模块：
+     - `lief`
+     - `anthropic`
+     - `fastmcp`
+     - `tenacity`
+     - `rust_demangler`
+     - `pygments`
+     - `anchorpy`
+     - `solana`
+     - `solders`
+     - `base58`
+     - `google-genai`
 
 3. 重启 Binary Ninja 以加载插件
 
@@ -181,6 +214,7 @@ This project is licensed under the MIT License.
 
 ### 文件结构
 
+#### 核心插件文件
 - `__init__.py` - 插件初始化和注册
 - `ebpf.py` - eBPF 架构实现
 - `solana.py` - Solana 平台定义
@@ -191,6 +225,15 @@ This project is licensed under the MIT License.
 - `direct_api_interface.py` - 直接 API 访问层
 - `mcp_utils.py` - MCP 协议工具
 - `types.c` - Solana 特定类型定义
+
+#### 配置文件
+- `plugin.json` - Binary Ninja 插件元数据
+- `requirements.txt` - Python 依赖列表
+
+#### AI/LLM 集成文件
+- `system.txt` - BinjaBot AI 助手的系统提示，包含 Solana/Anchor 类型定义
+- `context.txt` - MCP（模型上下文协议）架构文档
+- `binja_mcp_bridge_direct.py` - 用于直接 API 访问的 MCP 桥接实现
 
 ### 贡献
 
