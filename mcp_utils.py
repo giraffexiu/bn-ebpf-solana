@@ -13,7 +13,7 @@ def flatten(res) -> str:
         return res.text
     return str(res)
 
-#anthropic uses snake_case
+# Convert MCP tool format to Anthropic format
 def mcp_to_anthropic(tool):
     return {
         "name":         tool.name,
@@ -27,7 +27,7 @@ def blocks_to_str(blocks) -> str:
         if block.type == "text":
             out.append(block.text)
         elif block.type == "tool_use":
-            #display tool call for the llm
+            # Display tool call for LLM
             out.append(f"[tool_use {block.name} → {json.dumps(block.input)}]")
         elif block.type == "tool_result":
             out.append(f"[tool_result for {block.tool_use_id}: {block.content}]")

@@ -1,90 +1,201 @@
 # bn-ebpf-solana
 
-A pure-python Binary Ninja plugin for Solana EBPF.
+[English](#english) | [中文](#中文)
 
-## Regular install from plugin manager
+---
 
-Be sure to install both `bn-ebpf-solana` and `binary_ninja_mcp` from the plugin manager
+## English
 
-Tested on Binary Ninja `5.0.7486-Stable`
+### Overview
 
-## Manual installation (advanced, latest features)
+A comprehensive Binary Ninja plugin for analyzing eBPF and Solana programs. This plugin provides advanced disassembly, decompilation, and analysis capabilities specifically designed for Solana blockchain programs and eBPF bytecode.
 
-This is only needed if you wish to tinker with the plugin to modify it.
+### Features
 
-Clone this [repo](https://github.com/otter-sec/bn-ebpf-solana) in your Binja `plugins` folder, located in the [user folder](https://docs.binary.ninja/guide/index.html#user-folder).
+#### Core Architecture Support
+- **eBPF Architecture**: Complete instruction decoding and lifting to Binary Ninja's intermediate language
+- **Solana Platform**: Specialized support for Solana program binaries with ELF parsing
+- **Custom Binary View**: Enhanced Solana-specific binary analysis with memory mapping and symbol handling
 
-Now install the requirements :
-- either by running `Install python3 module` in Binja's `command palette` (Ctrl + P) and install the following modules
+#### Advanced Analysis Capabilities
+- **Instruction Lifting**: Converts eBPF instructions to Binary Ninja's Low Level IL (LLIL)
+- **Symbol Demangling**: Automatic Rust symbol demangling for better readability
+- **Program ID Detection**: Automatically identifies Solana program IDs from entry functions
+- **Syscall Handling**: Maps eBPF syscalls to readable function names
+- **Memory Mapping**: Creates proper memory segments for Solana program analysis
 
-```
-lief
-anthropic
-fastmcp
-tenacity
-rust_demangler  
-pygments  
-anchorpy  
-solana  
-solders
-base58
-```
+#### IDL Integration
+- **Anchor IDL Support**: Fetches and parses Interface Definition Language files
+- **On-chain IDL Retrieval**: Downloads IDL directly from Solana blockchain
+- **Type System Integration**: Loads custom Solana types for enhanced analysis
 
-- or by going to the [user folder](https://docs.binary.ninja/guide/index.html#user-folder) and installing the requirements.txt
+#### AI-Powered Analysis
+- **LLM Integration**: Built-in support for Anthropic Claude and Google Gemini
+- **Smart Decompilation**: AI-assisted code analysis and explanation
+- **Interactive Sidebar**: User-friendly interface for AI-powered reverse engineering
 
-Also for the MCP integration to work please install `mcp` globally (outside the binja venv) like so:
+#### Developer Tools
+- **MCP Bridge**: Model Context Protocol integration for external tool communication
+- **Direct API Interface**: Programmatic access to Binary Ninja functionality
+- **Custom UI Components**: Specialized sidebar for Solana program analysis
 
-```
-pip install mcp
-```
+### Installation
 
+1. Clone this repository to your Binary Ninja plugins directory:
+   ```bash
+   cd "~/Library/Application Support/Binary Ninja/plugins"
+   git clone https://github.com/your-repo/bn-ebpf-solana.git
+   ```
 
-See our [introductory blog post](https://osec.io/blog/tutorials/2022-08-27-reverse-engineering-solana/).
+2. Install required Python dependencies:
+   ```bash
+   pip install anchorpy solders anthropic google-generativeai
+   ```
 
-**Instruction lifting!**
-![](https://github.com/otter-sec/bn-ebpf-solana/blob/master/assets/lift.png?raw=true)
+3. Restart Binary Ninja to load the plugin
 
-**Solana SDK Structures!**
-![](https://github.com/otter-sec/bn-ebpf-solana/blob/master/assets/struct.png?raw=true)
+### Usage
 
-Copy this directory into your Binary Ninja plugins folder and restart.
+#### Basic Analysis
+1. Open a Solana program binary (.so file) in Binary Ninja
+2. The plugin automatically detects and applies Solana-specific analysis
+3. Use the sidebar panel for AI-assisted analysis
 
-## Features
+#### IDL Integration
+- The plugin automatically attempts to fetch IDL files for known programs
+- Custom types are loaded to enhance variable and function analysis
 
-- **Instruction Lifting**: All EBPF instructions are lifted to LLIL
-- **Accurate Memory Maps**: We implement Solana-specific memory maps (0x{1/2/3/4}00000000 addresses for data/stack/heap/input)
-- **Solana ELF Relocations**: Solana-specific ELF relocations
-- **Syscall Function Signatures**: Full signatures for all of the Solana syscalls
-- **(partial) Solana SDK Types**: Type definitions for all Solana SDK objects. (fully complete for C, in-progress for Rust)
+#### AI Analysis
+1. Configure your API keys in the sidebar settings
+2. Select functions or code regions for AI analysis
+3. Get detailed explanations and suggestions for reverse engineering
 
-### MCP integration
+### Configuration
 
-In order to use the MCP integration please set up your anthropic api key in the settings under
+#### API Keys
+Configure your LLM provider API keys through the plugin settings:
+- Anthropic Claude API key
+- Google Gemini API key
 
-```
-MCP settings > Anthropic API Key
-```
+#### Custom Types
+The plugin includes predefined Solana types in `types.c` for enhanced analysis.
 
-You will now be able to use the side menu on the right, symbolized by an R. 
-Click on any function to start prompting the model to call MCP actions, and to ultimately display a Rust version in the side panel
+### File Structure
 
-_TODO:_
+- `__init__.py` - Plugin initialization and registration
+- `ebpf.py` - eBPF architecture implementation
+- `solana.py` - Solana platform definition
+- `solanaview.py` - Solana binary view with ELF parsing
+- `instr.py` - eBPF instruction handling and IL generation
+- `sidebar_ui.py` - AI-powered analysis interface
+- `idl_utils.py` - IDL fetching and parsing utilities
+- `direct_api_interface.py` - Direct API access layer
+- `mcp_utils.py` - MCP protocol utilities
+- `types.c` - Solana-specific type definitions
 
-- **Solana SDK Signature Matching**: Automatically match common Solana SDK functions.
+### Contributing
 
-## Debugging
+Contributions are welcome! Please ensure all code follows the existing patterns and includes appropriate documentation.
 
-```
-[ScriptingProvider] ModuleNotFoundError: No module named 'lief'
-```
+### License
 
-Is `lief` installed?
+This project is licensed under the MIT License.
 
-Run the following in the Binja python console
+---
 
-```python
-import lief
-lief.__version__
-```
+## 中文
 
-If you get an error, refer to the **Installation** section
+### 概述
+
+一个用于分析 eBPF 和 Solana 程序的综合性 Binary Ninja 插件。该插件提供专为 Solana 区块链程序和 eBPF 字节码设计的高级反汇编、反编译和分析功能。
+
+### 功能特性
+
+#### 核心架构支持
+- **eBPF 架构**：完整的指令解码和提升到 Binary Ninja 中间语言
+- **Solana 平台**：专门支持 Solana 程序二进制文件的 ELF 解析
+- **自定义二进制视图**：增强的 Solana 特定二进制分析，包含内存映射和符号处理
+
+#### 高级分析能力
+- **指令提升**：将 eBPF 指令转换为 Binary Ninja 的低级中间语言 (LLIL)
+- **符号解码**：自动 Rust 符号解码以提高可读性
+- **程序 ID 检测**：从入口函数自动识别 Solana 程序 ID
+- **系统调用处理**：将 eBPF 系统调用映射为可读的函数名
+- **内存映射**：为 Solana 程序分析创建适当的内存段
+
+#### IDL 集成
+- **Anchor IDL 支持**：获取和解析接口定义语言文件
+- **链上 IDL 检索**：直接从 Solana 区块链下载 IDL
+- **类型系统集成**：加载自定义 Solana 类型以增强分析
+
+#### AI 驱动分析
+- **LLM 集成**：内置支持 Anthropic Claude 和 Google Gemini
+- **智能反编译**：AI 辅助代码分析和解释
+- **交互式侧边栏**：用户友好的 AI 驱动逆向工程界面
+
+#### 开发者工具
+- **MCP 桥接**：模型上下文协议集成，用于外部工具通信
+- **直接 API 接口**：对 Binary Ninja 功能的编程访问
+- **自定义 UI 组件**：专门用于 Solana 程序分析的侧边栏
+
+### 安装
+
+1. 将此仓库克隆到您的 Binary Ninja 插件目录：
+   ```bash
+   cd "~/Library/Application Support/Binary Ninja/plugins"
+   git clone https://github.com/your-repo/bn-ebpf-solana.git
+   ```
+
+2. 安装所需的 Python 依赖：
+   ```bash
+   pip install anchorpy solders anthropic google-generativeai
+   ```
+
+3. 重启 Binary Ninja 以加载插件
+
+### 使用方法
+
+#### 基础分析
+1. 在 Binary Ninja 中打开 Solana 程序二进制文件（.so 文件）
+2. 插件自动检测并应用 Solana 特定分析
+3. 使用侧边栏面板进行 AI 辅助分析
+
+#### IDL 集成
+- 插件自动尝试为已知程序获取 IDL 文件
+- 加载自定义类型以增强变量和函数分析
+
+#### AI 分析
+1. 在侧边栏设置中配置您的 API 密钥
+2. 选择函数或代码区域进行 AI 分析
+3. 获取详细的逆向工程解释和建议
+
+### 配置
+
+#### API 密钥
+通过插件设置配置您的 LLM 提供商 API 密钥：
+- Anthropic Claude API 密钥
+- Google Gemini API 密钥
+
+#### 自定义类型
+插件在 `types.c` 中包含预定义的 Solana 类型以增强分析。
+
+### 文件结构
+
+- `__init__.py` - 插件初始化和注册
+- `ebpf.py` - eBPF 架构实现
+- `solana.py` - Solana 平台定义
+- `solanaview.py` - 带 ELF 解析的 Solana 二进制视图
+- `instr.py` - eBPF 指令处理和 IL 生成
+- `sidebar_ui.py` - AI 驱动分析界面
+- `idl_utils.py` - IDL 获取和解析工具
+- `direct_api_interface.py` - 直接 API 访问层
+- `mcp_utils.py` - MCP 协议工具
+- `types.c` - Solana 特定类型定义
+
+### 贡献
+
+欢迎贡献！请确保所有代码遵循现有模式并包含适当的文档。
+
+### 许可证
+
+本项目采用 MIT 许可证。

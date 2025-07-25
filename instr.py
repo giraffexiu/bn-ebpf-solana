@@ -6,7 +6,7 @@ from binaryninja.enums import InstructionTextTokenType, BranchType, LowLevelILOp
 from binaryninja.architecture import Architecture
 from binaryninja.lowlevelil import LowLevelILLabel, LowLevelILFunction
 
-# binary ninja text helpers
+# Binary Ninja text token helpers
 def tI(x): return InstructionTextToken(InstructionTextTokenType.InstructionToken, x)
 def tR(x): return InstructionTextToken(InstructionTextTokenType.RegisterToken, x)
 def tS(x): return InstructionTextToken(InstructionTextTokenType.OperandSeparatorToken, x)
@@ -229,8 +229,7 @@ def fmt_jump_offset(off) -> str:
 
 
 def branch_type(op, s, dst, src, imm, off, addr) -> Instruction:
-    if op == 0: # ja
-        # target = addr + 8 + (signed(32, imm) * 8)
+    if op == 0:  # ja (jump always)
         target = addr + 8 + (signed(16, off) * 8)
         info = InstructionInfo(length=8)
         info.add_branch(BranchType.UnconditionalBranch, target)
@@ -242,12 +241,12 @@ def branch_type(op, s, dst, src, imm, off, addr) -> Instruction:
             info=info,
             llil=lambda il: il_jump(il, target)
         )
-    elif op == 8: # call
+    elif op == 8:  # call
         target = addr + 8 + (signed(32, imm) * 8)
         info = InstructionInfo(length=8)
 
         if src == 2:
-            # Custom marker, hardcoded to extern address.
+            # Custom marker for extern address
             info.add_branch(BranchType.CallDestination, imm)
             return Instruction(
                 text=[tI('call'), tT(' '), tA(hex(imm), imm)],
@@ -262,14 +261,13 @@ def branch_type(op, s, dst, src, imm, off, addr) -> Instruction:
                 llil=lambda il: il.append(il.system_call())
             )
         else:
-            # TODO: no idea why but this causes binja to crash:
             info.add_branch(BranchType.CallDestination, target)
             return Instruction(
                 text=[tI('call'), tT(' '), tA(hex(target), target)],
                 info=info,
                 llil=lambda il: il.append(il.call(il.const(8, target))),
             )
-    elif op == 9: # ret
+    elif op == 9:  # ret
         info = InstructionInfo(length=8)
         info.add_branch(BranchType.FunctionReturn)
         return Instruction(
@@ -288,7 +286,6 @@ def branch_type(op, s, dst, src, imm, off, addr) -> Instruction:
         info.add_branch(BranchType.FalseBranch, tneg)
 
         return Instruction(
-            # e.g: "jgt <+20> r3, 4"
             text=[
                 tI(name), tT(' '),
                 tS('<'), tN(fmt_jump_offset(signed(16, off)), signed(16, off)), tS('>'),
@@ -329,7 +326,7 @@ def decode(data: bytes, addr: int) -> Instruction:
     clz = op & 0b111
 
     if clz == 0b000:
-        if ldop == 3: # lddw
+        if ldop == 3:  # lddw (load double word)
             if len(data) < 16:
                 return None
             
@@ -342,7 +339,7 @@ def decode(data: bytes, addr: int) -> Instruction:
     elif clz == 0b011: return stx(dst, src, off, sz)
     elif clz == 0b111: return alu64(aop, s, dst, src, imm)
     elif clz == 0b100:
-        # 32-bit ALU
+        # 32-bit ALU operations (not implemented)
         pass
     elif clz == 0b101: return branch_type(aop, s, dst, src, imm, off, addr)
 

@@ -12,7 +12,7 @@ import time
 
 import sys, os
 
-# binja screws up stdout and stderr, fastmcp doesnt like that
+# Fix stdout/stderr for fastmcp compatibility
 def _safe_fd():
     return getattr(_safe_fd, "fd", os.open(os.devnull, os.O_RDWR))
 
@@ -24,7 +24,7 @@ for stream_name in ("stdout", "stderr"):
 
 
 
-# were sure to have an entry func, and we find the id in the first memcmp
+# Find program ID in entry function memcmp call
 def find_entry_memcmp_second_arg(bv):
     for function in bv.functions:
         if function.name.endswith("entry"):
@@ -128,22 +128,17 @@ class SolanaView(BinaryView):
         self.syscalls = {}
 
     def detect_id(self):
-        # analyze the entry func
+        # Analyze entry function to detect program ID
         for function in self.functions:
             if function.name.endswith("::entry") and "DebugList" not in function.name:
-                print("AAAAAAA")
                 self.idl = fetch_idl_anchorpy(self, function)
 
 
     def demangle_rust_symbol(self, mangled_name):
-        """
-        Demangle a Rust symbol name to make it more readable.
-        """
+        """Demangle Rust symbol names for better readability."""
         try:
             if mangled_name.startswith("_ZN"):
-                #remove this
-                # https://rust-lang.github.io/rfcs/2603-rust-symbol-name-mangling-v0.html#requirements-for-a-symbol-mangling-scheme
-                # for readability
+                # Remove hash suffix for readability
                 demangled = "::".join(str(rust_demangler.demangle(mangled_name)).split("::")[0:-1])
                 return demangled
             return mangled_name
@@ -206,6 +201,7 @@ class SolanaView(BinaryView):
             if s.type == lief.ELF.Segment.TYPE.LOAD:
                 self.add_auto_segment((1 << 32) + s.virtual_address, s.virtual_size, s.physical_address, s.physical_size, int(s.flags))
 
+        # Add Solana memory regions
         self.add_auto_segment(2 << 32, 0x8000, 0, 0, SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
         self.add_auto_segment(3 << 32, 0x8000, 0, 0, SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
         self.add_auto_segment(4 << 32, 0x8000, 0, 0, SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
@@ -214,24 +210,20 @@ class SolanaView(BinaryView):
         self.add_user_section("heap", 3 << 32, 0x8000, SectionSemantics.ReadWriteDataSectionSemantics)
         self.add_user_section("input", 4 << 32, 0x8000, SectionSemantics.ReadWriteDataSectionSemantics)
 
-        
-        # Special extern section with syscalls.
+        # Create extern section for syscalls
         self.add_auto_section('extern', EXTERN_START, EXTERN_SIZE, SectionSemantics.ReadOnlyCodeSectionSemantics)
 
-        # Map extern symbols to index.
+        # Map extern symbols to indices
         extern_map = {}
         curr_extern = 0
         for s in p.symbols:
             if s.type == lief.ELF.Symbol.TYPE.NOTYPE and s.binding == lief.ELF.Symbol.BINDING.GLOBAL:
-                # Skip duplicates
                 if s.name in extern_map:
                     continue
 
                 extern_map[s.name] = curr_extern
-
                 pos = EXTERN_START + (curr_extern * 16)
 
-                # Define symbol.
                 self.define_auto_symbol(Symbol(
                     SymbolType.LibraryFunctionSymbol,
                     pos,
@@ -240,8 +232,8 @@ class SolanaView(BinaryView):
 
                 self.add_function(pos, Platform['Solana'])
                 self.write(pos, bytes([
-                    0x85,0x10,0,0,0xff,0xff,0xff,0xff, # syscall marker
-                    0x95,0,0,0,0,0,0,0 # exit
+                    0x85,0x10,0,0,0xff,0xff,0xff,0xff,  # syscall marker
+                    0x95,0,0,0,0,0,0,0  # exit
                 ]))
 
                 if s.name in FUNCTION_SIGS:
@@ -264,7 +256,7 @@ class SolanaView(BinaryView):
                 'needs_pointer_adjustment': name in STRING_POINTER_SYSCALLS
             }
 
-        # Apply relocations.
+        # Apply ELF relocations
         for r in p.dynamic_relocations:
             addr = r.address + (1 << 32)
 
@@ -274,7 +266,7 @@ class SolanaView(BinaryView):
                     hi = int.from_bytes(self.read(addr + 12, 4), 'little')
                     v = (hi << 32) + lo
 
-                    # if already relocated, bail
+                    # Skip if already relocated
                     if v >= 0x100000000:
                         continue
 
@@ -284,7 +276,7 @@ class SolanaView(BinaryView):
                     self.write(addr + 4, lo.to_bytes(4, 'little'))
                     self.write(addr + 12, hi.to_bytes(4, 'little'))
 
-                #32 bit reloc
+                # Handle 32-bit relocations
                 elif r.type == 1744830472:
                     print(hex(r.symbol.value), hex(r.address), r.type)
                     print(hex(int.from_bytes(self.read(0x10017e838 + 12, 4), 'little')), hex(int.from_bytes(self.read(0x10017e838 + 4, 4), 'little')))
@@ -297,22 +289,21 @@ class SolanaView(BinaryView):
                     
                 elif r.type == Relocation.TYPE.BPF_64_32:
                     if r.symbol.is_function:
-                        # BPF Function
+                        # Handle BPF function relocations
                         target = r.symbol.value + (1 << 32)
                         off = (target - (addr + 8)) // 8
                         if off < 0:
                             off += 0x100000000
                         self.write(addr + 4, off.to_bytes(4, 'little'))
                     else:
-                        # Syscall
+                        # Handle syscall relocations
                         name = r.symbol.name
                         if name in extern_map:
                             idx = extern_map[name]
                             pos = EXTERN_START + (idx * 16)
                             self.write(addr + 4, pos.to_bytes(4, 'little'))
-                            self.write(addr + 1, bytes([2 << 4])) # Mark as absolute extern
+                            self.write(addr + 1, bytes([2 << 4]))  # Mark as absolute extern
                             
-                            # Store syscall location for later patching
                             self.syscalls[addr] = {
                                 'name': name,
                                 'needs_pointer_adjustment': name in STRING_POINTER_SYSCALLS
@@ -340,15 +331,11 @@ class SolanaView(BinaryView):
         return True
 
     def fix_all_pointers(self):
-        """
-        Scan through all code and fix any potential pointers that are below 0x100000000
-        by adding the program base offset (1 << 32).
-        """
+        """Fix unrelocated pointers by adding program base offset."""
         prog_base = 1 << 32
         total_fixed = 0
         
         for segment in self.segments:
-            # Skip the extern segment
             if segment.start == EXTERN_START:
                 continue
                 
@@ -361,30 +348,27 @@ class SolanaView(BinaryView):
             while addr < end - 16:  # Need at least 2 instructions (16 bytes)
                 instr = self.read(addr, 8)
                 
-                #if its a load
+                # Check for load immediate instructions
                 if instr[0] & 0xFF == 0x18:
-                    # Get the current immediate value
                     imm_lo = int.from_bytes(self.read(addr + 4, 4), 'little')
-                    
                     next_instr = self.read(addr + 8, 8)
                     imm_hi = int.from_bytes(self.read(addr + 12, 4), 'little')
                     
                     full_imm = (imm_hi << 32) | imm_lo
                     
-                    #if unrelocated
+                    # Fix unrelocated pointers
                     if 0 < full_imm < (1 << 32):
                         new_imm = full_imm + prog_base
                         new_imm_lo = new_imm & 0xFFFFFFFF
                         new_imm_hi = new_imm >> 32
                         
-                        # Update the instructions
                         self.write(addr + 4, new_imm_lo.to_bytes(4, 'little'))
                         self.write(addr + 12, new_imm_hi.to_bytes(4, 'little'))
                         
                         print(f"Fixed potential pointer at 0x{addr:x}: 0x{full_imm:x} -> 0x{new_imm:x}")
                         total_fixed += 1
                 
-                addr += 8  # next instr
+                addr += 8
         
         print(f"Total pointers fixed: {total_fixed}")
 

@@ -12,18 +12,13 @@ import base58
 DEFAULT_RPC = "https://api.mainnet-beta.solana.com"
 
 def fetch_idl_anchorpy(bv, func):
-    """
-    Three-line recipe:
-      1. Provider = AnchorPy wrapper around AsyncClient
-      2. Program.fetch_idl(pid, provider) → Idl object | None
-      3. Idl.to_json()
-    """
+    """Fetch IDL using AnchorPy from program ID found in entry function."""
 
     pid = Pubkey(collect_load_cmps(bv, func))
 
-    provider = Provider(AsyncClient(DEFAULT_RPC), None)    
+    provider = Provider(AsyncClient(DEFAULT_RPC), None)
     try:
-        idl      = asyncio.run(Program.fetch_idl(pid, provider))    # ← Anchor convenience
+        idl = asyncio.run(Program.fetch_idl(pid, provider))
     except Exception as _:
         idl = None
 
@@ -31,17 +26,13 @@ def fetch_idl_anchorpy(bv, func):
         return None
     return idl.to_json()
 
-# ---------------------------------------------------------------------------
 def collect_load_cmps(bv, func):
-    """
-    Scan the entrypoint and recover the 32-byte program ID by reading the first
-    four `lddw` immediate constants (64-bit each, little-endian).
-    """
+    """Extract program ID from entry function by collecting lddw immediates."""
     immediates = []
     INT      = bn.InstructionTextTokenType.IntegerToken
 
     for bb in func.basic_blocks:
-        for dline in bb.get_disassembly_text():  # ← single value per iter ✔
+        for dline in bb.get_disassembly_text():
             if dline is None:
                 continue
 
@@ -74,16 +65,12 @@ def program_id_from_entry(func) -> bytes | None:
         return raw
     return None
 
-# were sure to have an entry func, and we find the id in the first memcmp
+# Find program ID in entry function memcmp call
 def find_entry_memcmp_second_arg(bv, func):
     for function in bv.functions:
-        #match the anchor entrypoint
+        # Match Anchor entrypoint signature
         if function.name.endswith("::entry") and len(function.type.children) == 6:
-            # Get the HLIL
             hlil = function.hlil
-
-            print("HLIL: ", hlil)
-            print(hlil == None)
 
             for block in hlil:
                 print("BLOCK: ", block)
@@ -117,9 +104,9 @@ def find_memcmp_call(instruction):
     return None
 
 async def fetch_idl_raw(pid: Pubkey, rpc: str):
-    """Fetch, decompress and parse the IDL without Anchor helpers."""
+    """Fetch and decompress IDL directly from on-chain account."""
     conn = AsyncClient(rpc)
-    idl_addr = idl_pda(pid)                                    # PDA derivation logic :contentReference[oaicite:1]{index=1}
+    idl_addr = idl_pda(pid)
     resp = await conn.get_account_info(idl_addr)
     await conn.close()
 
@@ -129,7 +116,7 @@ async def fetch_idl_raw(pid: Pubkey, rpc: str):
 
     raw = base64.b64decode(acc.data[0])
 
-    # Anchor layout: discriminator[8] | zlib_len<u32> | zlib_bytes[..]
+    # Anchor IDL layout: discriminator[8] | zlib_len<u32> | zlib_bytes[..]
     (length,) = struct.unpack_from("<I", raw, 8)
     compressed = raw[12:12 + length]
     idl_json = json.loads(zlib.decompress(compressed))

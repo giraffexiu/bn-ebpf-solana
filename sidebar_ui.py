@@ -28,7 +28,7 @@ import sys, os
 from .idl_utils import fetch_idl_anchorpy
 from .direct_api_interface import DirectAPIInterface
 
-# binja screws up stdout and stderr, fastmcp doesnt like that
+# Fix stdout/stderr for fastmcp compatibility
 def _safe_fd():
     return getattr(_safe_fd, "fd", os.open(os.devnull, os.O_RDWR))
 
@@ -51,16 +51,7 @@ from .mcp_utils import *
 DEFAULT_RPC = "https://api.mainnet-beta.solana.com"
 
 
-# 使用直接API接口替代MCP客户端
-# SERVER_PATH = Path(__file__).parent / "binja_mcp_bridge_direct.py"  # 不再需要
-
-# 不再需要动态导入MCP桥接模块
-# import importlib.util
-# spec = importlib.util.spec_from_file_location("binja_mcp_bridge_direct", SERVER_PATH)
-# binja_mcp_direct = importlib.util.module_from_spec(spec)
-# spec.loader.exec_module(binja_mcp_direct)
-
-#settings
+# Settings configuration
 
 settings = Settings()
 setting_props = properties = f'{{"title" : "Anthropic API Key", "description" : "Your Anthropic API key for LLM requests", "type" : "string", "default" : ""}}'
@@ -100,42 +91,30 @@ class ClaudeRunner(LLMRunner):
         super().__init__(bar)
 
     def run(self):
-        """
-        BackgroundTaskThread entry-point.
-        • Talks to fast-mcp / Claude in a private event loop.
-        • If anything LLM-related fails, it prints a short notice instead of
-          killing the sidebar or Binary Ninja.
-        """
+        """Background thread entry point for LLM processing."""
         pretty_text = ""
 
         try:
-            # actual async work
             pretty_text = asyncio.run(self._extract_rust())
 
-        # ───── expected user-side failures ───────────────────────────────────
         except AuthenticationError as exc:
             pretty_text = f"LLM disabled: bad Anthropic API key ({exc})"
 
         except mcp_exc.McpError as exc:
             pretty_text = f"LLM disabled: MCP bridge error ({exc})"
 
-        except RuntimeError as exc:          # client not connected, etc.
+        except RuntimeError as exc:
             pretty_text = f"LLM disabled: {exc}"
 
-        # ───── any other unexpected crash ───────────────────────────────────
         except Exception as exc:
             pretty_text = f"LLM disabled: {type(exc).__name__}: {exc}"
 
-        # ───── always update the sidebar on UI thread ───────────────────────
         finally:
             execute_on_main_thread(
                 lambda: self.bar.update_ui_func(self.func, pretty_text)
             )
 
-    # ui stuff
-
-
-    #llm pipeline
+    # LLM processing pipeline
     async def _extract_rust(self) -> str:
         if not self.func:
             return ""
@@ -145,7 +124,7 @@ class ClaudeRunner(LLMRunner):
         if not api_key.startswith("sk-"):
             return "Please set your Anthropic API key in the plugin settings"
 
-        # 使用直接API接口
+        # Use direct API interface
         api_interface = DirectAPIInterface(self.bar.bv)
         tools = api_interface.get_available_tools()
         specs = [mcp_to_anthropic(t) for t in tools]
@@ -160,22 +139,19 @@ class ClaudeRunner(LLMRunner):
          }
          ]
 
-        for _ in range(50):                        # safety cap
+        for _ in range(50):  # Safety iteration limit
              reply = await self._call_claude(specs, msgs, api_key)
              tool_calls = [b for b in reply.content if b.type == "tool_use"]
 
-             # llm doesnt wanna call any tools anymore
+             # No more tool calls - extract final response
              if not tool_calls:
                  final = "".join(b.text for b in reply.content if b.type == "text")
-                 # claude is dumb and sometimes still inserts comments before code
+                 # Extract code from markdown blocks
                  if "```" in final:
-                     # Extract code content without the ``` markers
                      start_idx = final.index("```")
-                     # Find the end of the opening ``` line
                      newline_idx = final.find("\n", start_idx)
                      if newline_idx != -1:
                          code_start = newline_idx + 1
-                         # Find the closing ```
                          end_idx = final.find("```", code_start)
                          if end_idx != -1:
                              return final[code_start:end_idx].strip()
@@ -187,13 +163,13 @@ class ClaudeRunner(LLMRunner):
                      return final[final.index("pub fn"):]
                  return final
 
-             # tool calls
+             # Process tool calls
              results: list[Dict[str, Any]] = []
              for call in tool_calls:
                  try:
                      res = api_interface.call_tool(call.name, **call.input)
                      payload = json.dumps(blocks_to_str(res), ensure_ascii=False)
-                 except Exception as e:      # bad args, runtime error, etc.
+                 except Exception as e:
                      payload = json.dumps({"error": str(e)}, ensure_ascii=False)
 
                  results.append({
