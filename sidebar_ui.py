@@ -4,6 +4,7 @@ from binaryninja import (
     BackgroundTaskThread,
     execute_on_main_thread
 )
+# Use Binary Ninja's built-in Qt without importing binaryninjaui to avoid version conflicts
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QImage, QPainter, QFont, QColor
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout
@@ -17,9 +18,7 @@ from pygments.formatters import HtmlFormatter
 import asyncio, json, os
 import asyncio, json
 from typing import Any, Dict
-from anthropic import Anthropic, AuthenticationError, RateLimitError, APIStatusError
-from fastmcp import exceptions as mcp_exc
-from tenacity import retry, stop_after_attempt, wait_random_exponential
+# Removed Claude/Anthropic imports - using Gemini only
 from google import genai
 from google.genai import types as genai_types
 
@@ -54,26 +53,18 @@ DEFAULT_RPC = "https://api.mainnet-beta.solana.com"
 # Settings configuration
 
 settings = Settings()
-setting_props = properties = f'{{"title" : "Anthropic API Key", "description" : "Your Anthropic API key for LLM requests", "type" : "string", "default" : ""}}'
-setting_props_2 = properties = f'{{"title" : "Context for Solana MCP", "description" : "Absolute path to extra context to be provided, like an IDL", "type" : "string", "default" : ""}}'
-setting_props_3 = properties = f'{{"title" : "Gemini API Key", "description" : "Your Google Gemini API key for LLM requests", "type" : "string", "default" : ""}}'
-setting_props_4 = properties = f'{{"title" : "LLM Provider", "description" : "Choose between Claude and Gemini", "type" : "string", "default" : "claude", "enum" : ["claude", "gemini"]}}'
-settings.register_group("bn-ebpf-solana", "MCP settings")
+# Simplified settings - Gemini only
+setting_props_context = f'{{"title" : "Context for Solana MCP", "description" : "Absolute path to extra context to be provided, like an IDL", "type" : "string", "default" : ""}}'
+setting_props_gemini = f'{{"title" : "Gemini API Key", "description" : "Your Google Gemini API key for LLM requests", "type" : "string", "default" : ""}}'
+
+settings.register_group("bn-ebpf-solana", "Gemini Decompiler Settings")
 settings.register_setting(
-    "bn-ebpf-solana.context",           # identifier
-    setting_props_2
+    "bn-ebpf-solana.context",
+    setting_props_context
 )
 settings.register_setting(
-    "bn-ebpf-solana.anthropic_api_key",           # identifier
-    setting_props
-)
-settings.register_setting(
-    "bn-ebpf-solana.gemini_api_key",           # identifier
-    setting_props_3
-)
-settings.register_setting(
-    "bn-ebpf-solana.llm_provider",           # identifier
-    setting_props_4
+    "bn-ebpf-solana.gemini_api_key",
+    setting_props_gemini
 )
 
 
@@ -85,133 +76,28 @@ class LLMRunner(BackgroundTaskThread):
         self.func        = bar.f
         self.idl = bar.idl
         self.provider = provider
+        self._cancelled = False
+    
+    def cancel(self):
+        """Cancel the current task"""
+        self._cancelled = True
+        super().cancel()
+    
+    def is_cancelled(self):
+        """Check if the task has been cancelled"""
+        return self._cancelled
+    
+    def cleanup_task(self):
+        """Clean up task state in the sidebar widget"""
+        if self.bar.current_task == self:
+            self.bar.current_task = None
+            self.bar.pending_function = None
 
-class ClaudeRunner(LLMRunner):
-    def __init__(self, bar):
-        super().__init__(bar)
+# Claude runner removed - using Gemini only
 
-    def run(self):
-        """Background thread entry point for LLM processing."""
-        pretty_text = ""
+# Claude extract_rust method removed - using Gemini only
 
-        try:
-            pretty_text = asyncio.run(self._extract_rust())
-
-        except AuthenticationError as exc:
-            pretty_text = f"LLM disabled: bad Anthropic API key ({exc})"
-
-        except mcp_exc.McpError as exc:
-            pretty_text = f"LLM disabled: MCP bridge error ({exc})"
-
-        except RuntimeError as exc:
-            pretty_text = f"LLM disabled: {exc}"
-
-        except Exception as exc:
-            pretty_text = f"LLM disabled: {type(exc).__name__}: {exc}"
-
-        finally:
-            execute_on_main_thread(
-                lambda: self.bar.update_ui_func(self.func, pretty_text)
-            )
-
-    # LLM processing pipeline
-    async def _extract_rust(self) -> str:
-        if not self.func:
-            return ""
-
-        api_key = settings.get_string("bn-ebpf-solana.anthropic_api_key")
-
-        if not api_key.startswith("sk-"):
-            return "Please set your Anthropic API key in the plugin settings"
-
-        # Use direct API interface
-        api_interface = DirectAPIInterface(self.bar.bv)
-        tools = api_interface.get_available_tools()
-        specs = [mcp_to_anthropic(t) for t in tools]
-
-        msgs: list[Dict[str, Any]] = [{
-             "role":    "user",
-             "content": f"Improve the quality of decompilation inside binary ninja of {self.func.name} using all tools at your disposal"
-         },
-         {
-           "role": "user",
-           "content": "Here is the IDL interface file : " + self.idl if self.idl else ""
-         }
-         ]
-
-        for _ in range(50):  # Safety iteration limit
-             reply = await self._call_claude(specs, msgs, api_key)
-             tool_calls = [b for b in reply.content if b.type == "tool_use"]
-
-             # No more tool calls - extract final response
-             if not tool_calls:
-                 final = "".join(b.text for b in reply.content if b.type == "text")
-                 # Extract code from markdown blocks
-                 if "```" in final:
-                     start_idx = final.index("```")
-                     newline_idx = final.find("\n", start_idx)
-                     if newline_idx != -1:
-                         code_start = newline_idx + 1
-                         end_idx = final.find("```", code_start)
-                         if end_idx != -1:
-                             return final[code_start:end_idx].strip()
-                         else:
-                             return final[code_start:].strip()
-                     else:
-                         return final[start_idx + 3:].strip()
-                 if "pub fn" in final:
-                     return final[final.index("pub fn"):]
-                 return final
-
-             # Process tool calls
-             results: list[Dict[str, Any]] = []
-             for call in tool_calls:
-                 try:
-                     res = api_interface.call_tool(call.name, **call.input)
-                     payload = json.dumps(blocks_to_str(res), ensure_ascii=False)
-                 except Exception as e:
-                     payload = json.dumps({"error": str(e)}, ensure_ascii=False)
-
-                 results.append({
-                     "type":        "tool_result",
-                     "tool_use_id": call.id,
-                     "content":     payload,
-                 })
-
-             # ---------- feed results back to Claude ----------
-             msgs.append({"role": "assistant", "content": reply.content})
-             msgs.append({"role": "user",      "content": results})
-
-        raise RuntimeError("LLM never produced final text")
-
-    #wrap to circumvent rate limiting
-    @retry(
-        wait=wait_random_exponential(multiplier=1, min=10, max=60),  # 1 s → 30 s
-        stop=stop_after_attempt(5),
-        retry=(
-            lambda exc: isinstance(exc, (RateLimitError, APIStatusError))
-        ),
-        reraise=False,
-    )
-    async def _call_claude(self, specs, msgs, api_key):
-        """Single API call - automatically retried on 429 / 5xx."""
-        claude = Anthropic(api_key=api_key)
-
-        extra_context_path = settings.get_string("bn-ebpf-solana.context")
-        extra_context = ""
-
-        if(extra_context_path != ""):
-            with open(extra_context_path) as f:
-                extra_context = f.read()
-
-        return claude.messages.create(
-            model   = "claude-3-5-sonnet-20241022",
-            system  = open(Path(__file__).parent / "system.txt").read() + extra_context, 
-            messages     = msgs,
-            tools        = specs,
-            max_tokens   = 1_200,
-            temperature  = 0.3,
-        )
+# Claude API call method removed - using Gemini only
 
 class GeminiRunner(LLMRunner):
     def __init__(self, bar):
@@ -220,13 +106,31 @@ class GeminiRunner(LLMRunner):
     def run(self):
         """BackgroundTaskThread entry-point for Gemini."""
         pretty_text = ""
+        func_name = self.func.name if self.func else "unknown"
+        print(f"[DEBUG] GeminiRunner.run() started for function: {func_name}")
 
         try:
+            if self.is_cancelled():
+                print(f"[DEBUG] Task cancelled before starting for function: {func_name}")
+                self.cleanup_task()
+                return
+                
+            print(f"[DEBUG] Starting async Gemini extraction for function: {func_name}")
             # actual async work
             pretty_text = asyncio.run(self._extract_rust_gemini())
+            
+            if self.is_cancelled():
+                print(f"[DEBUG] Task cancelled after extraction for function: {func_name}")
+                self.cleanup_task()
+                return
+
+            print(f"[DEBUG] Gemini extraction completed for function: {func_name}, result length: {len(pretty_text)}")
+            if pretty_text and len(pretty_text) > 50:
+                print(f"[DEBUG] First 100 chars of result: {pretty_text[:100]}...")
 
         # ───── expected user-side failures ───────────────────────────────────
         except Exception as exc:
+            print(f"[DEBUG] Exception in GeminiRunner for function {func_name}: {type(exc).__name__}: {exc}")
             if "API_KEY" in str(exc) or "authentication" in str(exc).lower():
                 pretty_text = f"LLM disabled: bad Gemini API key ({exc})"
             elif "mcp" in str(exc).lower():
@@ -236,54 +140,108 @@ class GeminiRunner(LLMRunner):
 
         # ───── always update the sidebar on UI thread ───────────────────────
         finally:
-            execute_on_main_thread(
-                lambda: self.bar.update_ui_func(self.func, pretty_text)
-            )
+            if not self.is_cancelled():
+                print(f"[DEBUG] Updating UI for function: {func_name}")
+                execute_on_main_thread(
+                    lambda: self.bar.update_ui_func(self.func, pretty_text)
+                )
+            else:
+                print(f"[DEBUG] Task was cancelled, not updating UI for function: {func_name}")
+            self.cleanup_task()
 
     async def _extract_rust_gemini(self) -> str:
+        func_name = self.func.name if self.func else "unknown"
+        print(f"[DEBUG] _extract_rust_gemini() started for function: {func_name}")
+        
         if not self.func:
+            print(f"[DEBUG] No function provided, returning empty string")
             return ""
 
+        # Check for cancellation
+        if self.is_cancelled():
+            print(f"[DEBUG] Task cancelled at start of _extract_rust_gemini for function: {func_name}")
+            return "Task cancelled"
+
         api_key = settings.get_string("bn-ebpf-solana.gemini_api_key")
+        print(f"[DEBUG] API key configured: {bool(api_key)}")
 
         if not api_key:
+            print(f"[DEBUG] No Gemini API key found in settings")
             return "Please set your Gemini API key in the plugin settings"
 
-        gemini_client = genai.Client(api_key=api_key)
+        try:
+            gemini_client = genai.Client(api_key=api_key)
+            print(f"[DEBUG] Gemini client created successfully")
+        except Exception as e:
+            print(f"[DEBUG] Failed to create Gemini client: {e}")
+            return f"Failed to create Gemini client: {e}"
 
         # Get extra context
         extra_context_path = settings.get_string("bn-ebpf-solana.context")
         extra_context = ""
         if extra_context_path != "":
-            with open(extra_context_path) as f:
-                extra_context = f.read()
+            try:
+                with open(extra_context_path) as f:
+                    extra_context = f.read()
+                print(f"[DEBUG] Extra context loaded from: {extra_context_path}")
+            except Exception as e:
+                print(f"[DEBUG] Failed to load extra context: {e}")
 
-        system_prompt = open(Path(__file__).parent / "system.txt").read() + extra_context
+        try:
+            system_prompt = open(Path(__file__).parent / "system.txt").read() + extra_context
+            print(f"[DEBUG] System prompt loaded, length: {len(system_prompt)}")
+        except Exception as e:
+            print(f"[DEBUG] Failed to load system prompt: {e}")
+            system_prompt = "You are a helpful assistant for decompiling binary code to Rust."
 
         # Build the prompt
         prompt_content = f"Improve the quality of decompilation inside binary ninja of {self.func.name} using all tools at your disposal"
         if self.idl:
             prompt_content += f"\n\nHere is the IDL interface file: {self.idl}"
-
-        # 使用直接API接口
-        api_interface = DirectAPIInterface(self.bar.bv)
+            print(f"[DEBUG] IDL included in prompt")
         
-        # Use direct API with Gemini
-        response = await gemini_client.aio.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt_content,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.3,
-                max_output_tokens=1200
+        print(f"[DEBUG] Prompt content length: {len(prompt_content)}")
+
+        # Use direct API interface
+        api_interface = DirectAPIInterface(self.bar.bv)
+        print(f"[DEBUG] DirectAPIInterface created")
+        
+        # Check for cancellation before API call
+        if self.is_cancelled():
+            print(f"[DEBUG] Task cancelled before API call for function: {func_name}")
+            return "Task cancelled"
+        
+        print(f"[DEBUG] Making Gemini API call for function: {func_name}")
+        try:
+            # Use direct API with Gemini
+            response = await gemini_client.aio.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_content,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.3,
+                    max_output_tokens=1200
+                )
             )
-        )
+            print(f"[DEBUG] Gemini API call completed for function: {func_name}")
+        except Exception as e:
+            print(f"[DEBUG] Gemini API call failed for function {func_name}: {type(e).__name__}: {e}")
+            return f"Gemini API call failed: {e}"
+        
+        # Check for cancellation after API call
+        if self.is_cancelled():
+            print(f"[DEBUG] Task cancelled after API call for function: {func_name}")
+            return "Task cancelled"
         
         # Extract text from response
         if hasattr(response, 'text') and response.text:
             final = response.text
+            print(f"[DEBUG] Response received, length: {len(final)}")
+            print(f"[DEBUG] Response preview: {final[:200]}...")
+            
             # Clean up response similar to Claude
             if "```" in final:
+                print(f"[DEBUG] Found code blocks in response")
                 # Extract code content without the ``` markers
                 start_idx = final.index("```")
                 # Find the end of the opening ``` line
@@ -293,15 +251,25 @@ class GeminiRunner(LLMRunner):
                     # Find the closing ```
                     end_idx = final.find("```", code_start)
                     if end_idx != -1:
-                        return final[code_start:end_idx].strip()
+                        extracted = final[code_start:end_idx].strip()
+                        print(f"[DEBUG] Extracted code from markdown blocks, length: {len(extracted)}")
+                        return extracted
                     else:
-                        return final[code_start:].strip()
+                        extracted = final[code_start:].strip()
+                        print(f"[DEBUG] Extracted code from start to end, length: {len(extracted)}")
+                        return extracted
                 else:
-                    return final[start_idx + 3:].strip()
+                    extracted = final[start_idx + 3:].strip()
+                    print(f"[DEBUG] Extracted code after ```, length: {len(extracted)}")
+                    return extracted
             if "pub fn" in final:
-                return final[final.index("pub fn"):]
+                extracted = final[final.index("pub fn"):]
+                print(f"[DEBUG] Extracted from 'pub fn', length: {len(extracted)}")
+                return extracted
+            print(f"[DEBUG] Returning full response as no code blocks found")
             return final
         else:
+            print(f"[DEBUG] No text response from Gemini API")
             return "No response generated from Gemini"
 
 class LLMDecompSidebarWidget(SidebarWidget):
@@ -342,6 +310,10 @@ class LLMDecompSidebarWidget(SidebarWidget):
 
         #cache of llm responses
         self.cache = {}
+        
+        # Task management to prevent multiple concurrent LLM requests
+        self.current_task = None
+        self.pending_function = None
 
         # The editor will render HTML
         self.editor = QTextEdit()
@@ -381,11 +353,26 @@ class LLMDecompSidebarWidget(SidebarWidget):
         self._update()
 
     def update_ui_func(self, func, source):
+        print(f"[DEBUG] update_ui_func called for function: {func.name}, source length: {len(source)}")
+        
         if func.name not in self.cache:
             self.cache[func.name] = source
+            print(f"[DEBUG] Cached result for function: {func.name}")
+        else:
+            print(f"[DEBUG] Function {func.name} already in cache, updating anyway")
 
-        highlighted = highlight(source, RustLexer(), self._formatter)
-        self.editor.setHtml(highlighted)
+        if source and len(source) > 10:
+            print(f"[DEBUG] Source preview: {source[:100]}...")
+            try:
+                highlighted = highlight(source, RustLexer(), self._formatter)
+                self.editor.setHtml(highlighted)
+                print(f"[DEBUG] UI updated successfully for function: {func.name}")
+            except Exception as e:
+                print(f"[DEBUG] Failed to highlight code for function {func.name}: {e}")
+                self.editor.setHtml(f"<pre>{source}</pre>")
+        else:
+            print(f"[DEBUG] Source is empty or too short for function: {func.name}")
+            self.editor.setHtml(f"<pre>{source}</pre>")
 
     def _update(self):
         """
@@ -394,7 +381,8 @@ class LLMDecompSidebarWidget(SidebarWidget):
         Fixes:
         ▸ Guard against cases where the current address is NOT inside any
           discovered function (bn.get_functions_containing returns []).
-        ▸ Avoid repeated work if we’re still in the same function.
+        ▸ Avoid repeated work if we're still in the same function.
+        ▸ Prevent multiple concurrent LLM requests that cause UI freezing.
         """
         # ── Early-outs ────────────────────────────────────────────────────────────
         if not self.frame or not self.bv:
@@ -403,7 +391,7 @@ class LLMDecompSidebarWidget(SidebarWidget):
         view = self.frame.getCurrentViewInterface()
         addr = view.getCurrentOffset()
 
-        if addr == self.here:               # cursor hasn’t moved
+        if addr == self.here:               # cursor hasn't moved
             return
         self.here = addr
 
@@ -413,6 +401,11 @@ class LLMDecompSidebarWidget(SidebarWidget):
             # Cursor is in padding / header / data region → just clear pane.
             self.editor.setHtml("")
             self.f = None
+            # Cancel any pending task
+            if self.current_task and self.current_task.is_alive():
+                self.current_task.cancel()
+                self.current_task = None
+            self.pending_function = None
             return
 
         func = funcs[0]
@@ -425,12 +418,23 @@ class LLMDecompSidebarWidget(SidebarWidget):
             self.update_ui_func(func, self.cache[func.name])
             return
 
+        # ── Task management: prevent multiple concurrent requests ──────────────────
+        # If there's already a task running, check if it's for the same function
+        if self.current_task and self.current_task.is_alive():
+            if self.pending_function == func:
+                # Already processing this function, just wait
+                return
+            else:
+                # Cancel the current task and start a new one
+                self.current_task.cancel()
+                self.current_task = None
+
         # ── Kick off background LLM job ───────────────────────────────────────
-        provider = settings.get_string("bn-ebpf-solana.llm_provider")
-        if provider == "gemini":
-            task = GeminiRunner(self)
-        else:
-            task = ClaudeRunner(self)
+        self.pending_function = func
+        print(f"[DEBUG] Starting Gemini decompilation for function: {func.name}")
+        task = GeminiRunner(self)
+        
+        self.current_task = task
         task.start()
 
     def contextMenuEvent(self, event):
@@ -451,7 +455,7 @@ class LLMDecompSidebarWidgetType(SidebarWidgetType):
         painter.drawText(QRectF(0, 0, 56, 56), Qt.AlignCenter, "R")
         painter.end()
 
-        super().__init__(icon, "AI reconstructed Rust (Claude/Gemini)")
+        super().__init__(icon, "AI reconstructed Rust (Gemini)")
 
     def createWidget(self, frame, data):
         # frame: a ViewFrameRef, data: BinaryViewRef or None

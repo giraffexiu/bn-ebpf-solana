@@ -30,8 +30,8 @@
             "solana",
             "solders",
             "base58",
-            "anthropic",
-            "google-genai"
+            "google-genai",
+            "google-cloud-aiplatform"
         ]
     },
     "installinstructions": {

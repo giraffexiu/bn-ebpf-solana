@@ -4,7 +4,7 @@ import threading
 import sys
 import os
 
-# 尝试导入Binary Ninja，如果失败则设置为None
+# Try to import Binary Ninja, set to None if failed
 try:
     import binaryninja as bn
     BN_AVAILABLE = True
@@ -13,25 +13,25 @@ except ImportError:
     BN_AVAILABLE = False
     print("Warning: Binary Ninja not available, running in mock mode")
 
-# 全局变量存储当前的BinaryView实例
+# Global variable to store current BinaryView instance
 _current_bv: Optional = None
 _bv_lock = threading.Lock()
 
 mcp = FastMCP("binja-mcp-direct")
 
 def set_current_binary_view(bv):
-    """设置当前的BinaryView实例"""
+    """Set the current BinaryView instance"""
     global _current_bv
     with _bv_lock:
         _current_bv = bv
 
 def get_current_binary_view():
-    """获取当前的BinaryView实例"""
+    """Get the current BinaryView instance"""
     with _bv_lock:
         return _current_bv
 
 def safe_execute(func, *args, **kwargs):
-    """安全执行函数，捕获异常并返回错误信息"""
+    """Safely execute function, catch exceptions and return error information"""
     if not BN_AVAILABLE:
         return ["Error: Binary Ninja not available"]
     
@@ -77,7 +77,7 @@ def decompile_function(name: str) -> List[str]:
         if not func:
             return [f"Error: Function '{name}' not found"]
         
-        # 获取高级IL表示
+        # Get high-level IL representation
         hlil = func.hlil
         if hlil:
             return hlil.source_code.split('\n')
@@ -357,7 +357,7 @@ def retype_variable(function_name: str, variable_name: str, type_str: str) -> Li
         if not func:
             return [f"Error: Function '{function_name}' not found"]
         
-        # 这是一个简化的实现，实际的变量重新类型化需要更复杂的逻辑
+        # This is a simplified implementation, actual variable retyping requires more complex logic
         return [f"Variable '{variable_name}' in function '{function_name}' retyped to '{type_str}' (simplified implementation)"]
     
     return safe_execute(_retype_variable)
@@ -376,7 +376,7 @@ def rename_variable(function_name: str, variable_name: str, new_name: str) -> Li
         if not func:
             return [f"Error: Function '{function_name}' not found"]
         
-        # 这是一个简化的实现，实际的变量重命名需要更复杂的逻辑
+        # This is a simplified implementation, actual variable renaming requires more complex logic
         return [f"Variable '{variable_name}' in function '{function_name}' renamed to '{new_name}' (simplified implementation)"]
     
     return safe_execute(_rename_variable)

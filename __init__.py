@@ -21,3 +21,17 @@ SolanaView.register()
 
 # Import sidebar UI module to register LLM decompilation panel
 from . import sidebar_ui
+
+# Import batch Rust decompiler functionality
+from .batch_rust_decompiler import show_batch_rust_decompiler
+
+# Register batch Rust decompiler command
+def run_batch_rust_decompiler(bv):
+    """Run batch Rust decompiler"""
+    show_batch_rust_decompiler(bv)
+
+PluginCommand.register(
+    "Batch Rust Decompiler (Gemini)",
+    "Batch Rust decompilation using Gemini AI",
+    run_batch_rust_decompiler
+)
