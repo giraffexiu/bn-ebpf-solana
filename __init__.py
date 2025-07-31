@@ -2,7 +2,7 @@ from binaryninja import CallingConvention, Architecture, Platform, PluginCommand
 from binaryninja.typelibrary import TypeLibrary
 from binaryninja.types import Type, TypeBuilder
 
-from .idl_utils import *
+
 from .ebpf import EBPF
 EBPF().register()
 

@@ -4,7 +4,7 @@ from lief.ELF import Relocation
 from binaryninja import BinaryView, SegmentFlag, SectionSemantics, Symbol, SymbolType, Platform, BackgroundTaskThread, execute_on_main_thread
 import binaryninja as bn
 import lief
-from .idl_utils import fetch_idl_anchorpy
+
 import rust_demangler  # Import rust_demangle for demangling
 import re
 import html
@@ -123,7 +123,6 @@ class SolanaView(BinaryView):
         self.data = data
 
         self.extern_data = [0] * EXTERN_SIZE
-        self.idl = None
         # Keep track of syscalls for patching
         self.syscalls = {}
 
@@ -131,7 +130,7 @@ class SolanaView(BinaryView):
         # Analyze entry function to detect program ID
         for function in self.functions:
             if function.name.endswith("::entry") and "DebugList" not in function.name:
-                self.idl = fetch_idl_anchorpy(self, function)
+                pass  # IDL detection functionality removed
 
 
     def demangle_rust_symbol(self, mangled_name):

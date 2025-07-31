@@ -5,15 +5,14 @@ import os
 import json
 import hashlib
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any, Tuple
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QProgressBar, QTextEdit, QComboBox, QSpinBox, QCheckBox,
-    QMessageBox, QFileDialog, QGridLayout, QGroupBox, QScrollArea,
-    QTabWidget
+    QProgressBar, QTextEdit, QCheckBox, QMessageBox, QFileDialog, 
+    QGridLayout, QGroupBox
 )
-from PySide6.QtCore import QThread, Signal, Qt, QTimer
+from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtGui import QFont
 
 import binaryninja as bn
@@ -25,16 +24,23 @@ from pygments import highlight
 from pygments.lexers import RustLexer
 from pygments.formatters import HtmlFormatter
 
-from .idl_utils import fetch_idl_anchorpy
 from .direct_api_interface import DirectAPIInterface
+
 
 settings = Settings()
 
 class CacheManager:
     """Local cache manager for Rust decompilation results"""
     
-    def __init__(self, cache_dir: str = "/Users/giraffe/Downloads/Work/Solana/ebpf/cache_test"):
-        self.cache_dir = Path(cache_dir)
+    def __init__(self, cache_dir: str = None):
+        if cache_dir is None:
+            # Use plugin directory's cache subdirectory as default
+            plugin_dir = Path(__file__).parent
+            cache_dir = plugin_dir / "cache"
+        else:
+            cache_dir = Path(cache_dir)
+        
+        self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
     def _get_function_hash(self, binary_view: bn.BinaryView, func: bn.Function) -> str:
@@ -61,8 +67,8 @@ class CacheManager:
             if cache_file.exists():
                 with open(cache_file, 'r', encoding='utf-8') as f:
                     return f.read()
-        except Exception as e:
-            print(f"[DEBUG] Cache read error for {func.name}: {e}")
+        except Exception:
+            pass
         
         return None
     
@@ -73,23 +79,19 @@ class CacheManager:
             cache_file = self.cache_dir / f"{func_hash}.rs"
             
             with open(cache_file, 'w', encoding='utf-8') as f:
-                f.write(f"// Cached result for function: {func.name}\n")
-                f.write(f"// Binary: {binary_view.file.filename}\n")
-                f.write(f"// Generated: {os.path.basename(cache_file)}\n\n")
+                f.write(f"// Cached: {func.name}\n")
                 f.write(rust_code)
                 
-            print(f"[DEBUG] Cached result for {func.name} -> {cache_file}")
-        except Exception as e:
-            print(f"[DEBUG] Cache write error for {func.name}: {e}")
+        except Exception:
+            pass
     
     def clear_cache(self):
         """Clear all cached results"""
         try:
             for cache_file in self.cache_dir.glob("*.rs"):
                 cache_file.unlink()
-            print(f"[DEBUG] Cache cleared: {self.cache_dir}")
-        except Exception as e:
-            print(f"[DEBUG] Cache clear error: {e}")
+        except Exception:
+            pass
     
     def get_cache_stats(self) -> dict:
         """Get cache statistics"""
@@ -101,8 +103,7 @@ class CacheManager:
                 "size_bytes": total_size,
                 "size_mb": round(total_size / (1024 * 1024), 2)
             }
-        except Exception as e:
-            print(f"[DEBUG] Cache stats error: {e}")
+        except Exception:
             return {"count": 0, "size_bytes": 0, "size_mb": 0}
 
 class BatchRustDecompilerWorker(QThread):
@@ -113,34 +114,22 @@ class BatchRustDecompilerWorker(QThread):
     finished = Signal(dict)  # results
     error_occurred = Signal(str)  # error message
     
-    def __init__(self, binary_view: bn.BinaryView, skip_library_functions: bool = True, use_cache: bool = True):
+    def __init__(self, binary_view: bn.BinaryView, use_cache: bool = True):
         super().__init__()
         self.binary_view = binary_view
-        self.skip_library_functions = skip_library_functions
         self.use_cache = use_cache
         self.results = {}
         self._should_stop = False
-        self.idl = None
         self.cache_manager = CacheManager()
-        
-        # Detect IDL like in sidebar_ui.py
-        self._detect_idl()
     
-    def _detect_idl(self):
-        """Detect IDL from entry function"""
-        for function in self.binary_view.functions:
-            if function.name.endswith("::entry") and "DebugList" not in function.name:
-                self.idl = fetch_idl_anchorpy(self.binary_view, function)
-                break
     
     def run(self):
         """Main worker thread execution"""
         try:
             self._should_stop = False
             
-            # Get functions to process
-            functions = [func for func in self.binary_view.functions 
-                        if not (self.skip_library_functions and func.name.startswith('_'))]
+            # Get all functions to process
+            functions = list(self.binary_view.functions)
             
             total_functions = len(functions)
             self.progress_updated.emit(0, total_functions, f"Starting Rust decompilation of {total_functions} functions...")
@@ -159,7 +148,6 @@ class BatchRustDecompilerWorker(QThread):
                     if self.use_cache:
                         rust_code = self.cache_manager.get_cached_result(self.binary_view, func)
                         if rust_code:
-                            print(f"[DEBUG] Using cached result for {func.name}")
                             self.progress_updated.emit(i, total_functions, f"Using cached result for {func.name}")
                     
                     # If no cached result, call API
@@ -175,8 +163,6 @@ class BatchRustDecompilerWorker(QThread):
                     self.function_completed.emit(func.name, rust_code)
                     
                 except Exception as e:
-                    error_msg = f"Error processing {func.name}: {str(e)}"
-                    print(error_msg)
                     self.results[func.name] = f"Error: {str(e)}"
                     self.function_completed.emit(func.name, f"Error: {str(e)}")
             
@@ -187,37 +173,29 @@ class BatchRustDecompilerWorker(QThread):
             
         except Exception as e:
             error_msg = f"Batch Rust decompilation failed: {str(e)}"
-            print(f"BatchRustDecompilerWorker error: {error_msg}")
-            import traceback
-            traceback.print_exc()
             self.error_occurred.emit(error_msg)
     
     async def _extract_rust_gemini(self, func: bn.Function) -> str:
         """Extract Rust code using Gemini API - based on sidebar_ui.py implementation"""
         func_name = func.name if func else "unknown"
-        print(f"[DEBUG] _extract_rust_gemini() started for function: {func_name}")
         
         if not func:
-            print(f"[DEBUG] No function provided, returning empty string")
             return ""
 
         # Check for stop request
         if self._should_stop:
-            print(f"[DEBUG] Task stopped at start of _extract_rust_gemini for function: {func_name}")
             return "Task stopped"
 
         api_key = settings.get_string("bn-ebpf-solana.gemini_api_key")
-        print(f"[DEBUG] API key configured: {bool(api_key)}")
 
         if not api_key:
-            print(f"[DEBUG] No Gemini API key found in settings")
+            print(f"[ERROR] No Gemini API key found in settings")
             return "Please set your Gemini API key in the plugin settings"
 
         try:
             gemini_client = genai.Client(api_key=api_key)
-            print(f"[DEBUG] Gemini client created successfully")
         except Exception as e:
-            print(f"[DEBUG] Failed to create Gemini client: {e}")
+            print(f"[ERROR] Failed to create Gemini client: {e}")
             return f"Failed to create Gemini client: {e}"
 
         # Get extra context
@@ -227,35 +205,25 @@ class BatchRustDecompilerWorker(QThread):
             try:
                 with open(extra_context_path) as f:
                     extra_context = f.read()
-                print(f"[DEBUG] Extra context loaded from: {extra_context_path}")
             except Exception as e:
-                print(f"[DEBUG] Failed to load extra context: {e}")
+                print(f"[WARNING] Failed to load extra context: {e}")
 
         try:
             system_prompt = open(Path(__file__).parent / "system.txt").read() + extra_context
-            print(f"[DEBUG] System prompt loaded, length: {len(system_prompt)}")
         except Exception as e:
-            print(f"[DEBUG] Failed to load system prompt: {e}")
+            print(f"[WARNING] Failed to load system prompt: {e}")
             system_prompt = "You are a helpful assistant for decompiling binary code to Rust."
 
         # Build the prompt
         prompt_content = f"Improve the quality of decompilation inside binary ninja of {func.name} using all tools at your disposal"
-        if self.idl:
-            prompt_content += f"\n\nHere is the IDL interface file: {self.idl}"
-            print(f"[DEBUG] IDL included in prompt")
-        
-        print(f"[DEBUG] Prompt content length: {len(prompt_content)}")
 
         # Use direct API interface
         api_interface = DirectAPIInterface(self.binary_view)
-        print(f"[DEBUG] DirectAPIInterface created")
         
         # Check for stop request before API call
         if self._should_stop:
-            print(f"[DEBUG] Task stopped before API call for function: {func_name}")
             return "Task stopped"
         
-        print(f"[DEBUG] Making Gemini API call for function: {func_name}")
         try:
             # Use direct API with Gemini
             response = await gemini_client.aio.models.generate_content(
@@ -267,25 +235,20 @@ class BatchRustDecompilerWorker(QThread):
                     max_output_tokens=1200
                 )
             )
-            print(f"[DEBUG] Gemini API call completed for function: {func_name}")
         except Exception as e:
-            print(f"[DEBUG] Gemini API call failed for function {func_name}: {type(e).__name__}: {e}")
+            print(f"[ERROR] Gemini API call failed for function {func_name}: {e}")
             return f"Gemini API call failed: {e}"
         
         # Check for stop request after API call
         if self._should_stop:
-            print(f"[DEBUG] Task stopped after API call for function: {func_name}")
             return "Task stopped"
         
         # Extract text from response
         if hasattr(response, 'text') and response.text:
             final = response.text
-            print(f"[DEBUG] Response received, length: {len(final)}")
-            print(f"[DEBUG] Response preview: {final[:200]}...")
             
             # Clean up response similar to sidebar_ui.py
             if "```" in final:
-                print(f"[DEBUG] Found code blocks in response")
                 # Extract code content without the ``` markers
                 start_idx = final.index("```")
                 # Find the end of the opening ``` line
@@ -296,24 +259,19 @@ class BatchRustDecompilerWorker(QThread):
                     end_idx = final.find("```", code_start)
                     if end_idx != -1:
                         extracted = final[code_start:end_idx].strip()
-                        print(f"[DEBUG] Extracted code from markdown blocks, length: {len(extracted)}")
                         return extracted
                     else:
                         extracted = final[code_start:].strip()
-                        print(f"[DEBUG] Extracted code from start to end, length: {len(extracted)}")
                         return extracted
                 else:
                     extracted = final[start_idx + 3:].strip()
-                    print(f"[DEBUG] Extracted code after ```, length: {len(extracted)}")
                     return extracted
             if "pub fn" in final:
                 extracted = final[final.index("pub fn"):]
-                print(f"[DEBUG] Extracted from 'pub fn', length: {len(extracted)}")
                 return extracted
-            print(f"[DEBUG] Returning full response as no code blocks found")
             return final
         else:
-            print(f"[DEBUG] No text response from Gemini API")
+            print(f"[ERROR] No text response from Gemini API")
             return "No response generated from Gemini"
     
     def stop(self):
@@ -347,17 +305,11 @@ class BatchRustDecompilerDialog(QDialog):
         config_group = QGroupBox("Configuration")
         config_layout = QGridLayout(config_group)
         
-        # Skip library functions
-        config_layout.addWidget(QLabel("Skip Library Functions:"), 0, 0)
-        self.skip_lib_checkbox = QCheckBox()
-        self.skip_lib_checkbox.setChecked(True)
-        config_layout.addWidget(self.skip_lib_checkbox, 0, 1)
-        
         # Use cache
-        config_layout.addWidget(QLabel("Use Local Cache:"), 1, 0)
+        config_layout.addWidget(QLabel("Use Local Cache:"), 0, 0)
         self.use_cache_checkbox = QCheckBox()
         self.use_cache_checkbox.setChecked(True)
-        config_layout.addWidget(self.use_cache_checkbox, 1, 1)
+        config_layout.addWidget(self.use_cache_checkbox, 0, 1)
         
         layout.addWidget(config_group)
         
@@ -438,6 +390,10 @@ class BatchRustDecompilerDialog(QDialog):
         self.export_button.setEnabled(False)
         button_layout.addWidget(self.export_button)
         
+        self.export_callgraph_button = QPushButton("Export Call Graph")
+        self.export_callgraph_button.clicked.connect(self._export_call_graph)
+        button_layout.addWidget(self.export_callgraph_button)
+        
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.close)
         button_layout.addWidget(self.close_button)
@@ -501,11 +457,10 @@ class BatchRustDecompilerDialog(QDialog):
                               "Please configure your Gemini API key in the plugin settings.")
             return
         
-        skip_library_functions = self.skip_lib_checkbox.isChecked()
         use_cache = self.use_cache_checkbox.isChecked()
         
         # Create and start worker
-        self.worker = BatchRustDecompilerWorker(self.binary_view, skip_library_functions, use_cache)
+        self.worker = BatchRustDecompilerWorker(self.binary_view, use_cache)
         self.worker.progress_updated.connect(self._on_progress)
         self.worker.function_completed.connect(self._on_function_completed)
         self.worker.finished.connect(self._on_finished)
@@ -611,8 +566,178 @@ class BatchRustDecompilerDialog(QDialog):
                 QMessageBox.information(self, "Export Complete", f"Results exported to: {filename}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Failed to export results:\n{str(e)}")
+    
 
-
+    
+    def _serialize_for_json(self, obj):
+        """Convert Binary Ninja specific types to JSON serializable types"""
+        if hasattr(obj, 'value') and hasattr(obj, 'confidence'):
+            # Handle BoolWithConfidence and similar types
+            return obj.value
+        elif hasattr(obj, '__bool__'):
+            # Handle other boolean-like objects
+            return bool(obj)
+        return obj
+    
+    def _export_call_graph(self):
+        """Export function call graph as JSON file"""
+        try:
+            # Show file save dialog
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Function Call Graph",
+                f"{self.binary_view.file.filename}_call_graph.json",
+                "JSON Files (*.json);;All Files (*)"
+            )
+            
+            if not file_path:
+                return
+            
+            # Extract call graph
+            self.progress_label.setText("Extracting function call relationships...")
+            self.progress_bar.setRange(0, 0)  # Indeterminate progress
+            
+            if not self.binary_view:
+                raise Exception("No binary view available")
+            
+            if len(self.binary_view.functions) == 0:
+                self.binary_view.update_analysis_and_wait()
+            
+            # Build comprehensive call graph data structure
+            call_graph = {
+                "binary_info": {
+                    "filename": self.binary_view.file.filename,
+                    "arch": str(self.binary_view.arch),
+                    "platform": str(self.binary_view.platform),
+                    "entry_point": hex(self.binary_view.entry_point) if self.binary_view.entry_point else None,
+                    "total_functions": len(self.binary_view.functions)
+                },
+                "functions": {},
+                "statistics": {
+                    "total_calls": 0,
+                    "internal_calls": 0,
+                    "external_calls": 0,
+                    "recursive_calls": 0
+                }
+            }
+            
+            # Extract detailed function information and call relationships
+            total_calls = 0
+            internal_calls = 0
+            external_calls = 0
+            recursive_calls = 0
+            
+            for func in self.binary_view.functions:
+                # Get function calls
+                calls_to = []
+                called_by = []
+                
+                # Analyze outgoing calls using callees property
+                for callee in func.callees:
+                    target_name = callee.name
+                    internal_calls += 1
+                    if callee == func:
+                        recursive_calls += 1
+                    
+                    calls_to.append({
+                        "target": target_name,
+                        "address": f"0x{callee.start:x}"
+                    })
+                    total_calls += 1
+                
+                # Also check for external calls through call sites
+                for call_site in func.call_sites:
+                    refs_from = self.binary_view.get_code_refs_from(call_site.address)
+                    for ref in refs_from:
+                        # Check if this is an external symbol
+                        symbol = self.binary_view.get_symbol_at(ref)
+                        if symbol and not self.binary_view.get_function_at(ref):
+                            external_calls += 1
+                            calls_to.append({
+                                "target": symbol.name,
+                                "address": f"0x{ref:x}",
+                                "call_site": f"0x{call_site.address:x}",
+                                "external": True
+                            })
+                            total_calls += 1
+                            break
+                
+                # Find incoming calls using callers property
+                for caller in func.callers:
+                    called_by.append({
+                        "caller": caller.name,
+                        "address": f"0x{caller.start:x}"
+                    })
+                
+                # Build function info
+                func_info = {
+                    "address": f"0x{func.start:x}",
+                    "size": int(func.total_bytes),
+                    "name": func.name,
+                    "symbol_type": str(func.symbol.type) if func.symbol else "SymbolType.FunctionSymbol",
+                    "can_return": self._serialize_for_json(func.can_return),
+                    "basic_blocks": len(func.basic_blocks),
+                    "calls_to": calls_to,
+                    "called_by": called_by
+                }
+                
+                call_graph["functions"][func.name] = func_info
+            
+            # Update statistics
+            call_graph["statistics"] = {
+                "total_calls": total_calls,
+                "internal_calls": internal_calls,
+                "external_calls": external_calls,
+                "recursive_calls": recursive_calls
+            }
+            
+            # Save to JSON file
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(call_graph, f, indent=2, ensure_ascii=False)
+            
+            # Reset progress
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(100)
+            self.progress_label.setText("Call graph export completed")
+            
+            # Show success message with statistics
+            stats = call_graph.get('statistics', {})
+            binary_info = call_graph.get('binary_info', {})
+            
+            success_msg = f"""Function call graph exported successfully!
+            
+File: {file_path}
+Format: JSON
+            
+Statistics:
+            • Total Functions: {binary_info.get('total_functions', 0)}
+            • Total Calls: {stats.get('total_calls', 0)}
+            • Internal Calls: {stats.get('internal_calls', 0)}
+            • External Calls: {stats.get('external_calls', 0)}
+            • Recursive Calls: {stats.get('recursive_calls', 0)}
+            
+Architecture: {binary_info.get('arch', 'Unknown')}
+Platform: {binary_info.get('platform', 'Unknown')}
+Entry Point: {binary_info.get('entry_point', 'Unknown')}"""
+            
+            QMessageBox.information(
+                self, "Call Graph Export Success", success_msg
+            )
+            
+        except Exception as e:
+            print(f"[ERROR] Call graph export failed: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Reset progress on error
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_label.setText("Ready")
+            
+            QMessageBox.critical(
+                self, "Call Graph Export Error", 
+                f"Failed to extract and export call graph:\n{str(e)}\n\nSee console for details."
+            )
 def show_batch_rust_decompiler(binary_view: bn.BinaryView):
     """Show the batch Rust decompiler dialog"""
     dialog = BatchRustDecompilerDialog(binary_view)

@@ -24,8 +24,9 @@ from google.genai import types as genai_types
 
 import sys, os
 
-from .idl_utils import fetch_idl_anchorpy
+
 from .direct_api_interface import DirectAPIInterface
+from .batch_rust_decompiler import CacheManager
 
 # Fix stdout/stderr for fastmcp compatibility
 def _safe_fd():
@@ -74,7 +75,6 @@ class LLMRunner(BackgroundTaskThread):
         super().__init__(f"Prompting {provider.title()} for Rust (running)…", can_cancel=True)
         self.bar = bar
         self.func        = bar.f
-        self.idl = bar.idl
         self.provider = provider
         self._cancelled = False
     
@@ -196,9 +196,6 @@ class GeminiRunner(LLMRunner):
 
         # Build the prompt
         prompt_content = f"Improve the quality of decompilation inside binary ninja of {self.func.name} using all tools at your disposal"
-        if self.idl:
-            prompt_content += f"\n\nHere is the IDL interface file: {self.idl}"
-            print(f"[DEBUG] IDL included in prompt")
         
         print(f"[DEBUG] Prompt content length: {len(prompt_content)}")
 
@@ -279,7 +276,7 @@ class LLMDecompSidebarWidget(SidebarWidget):
         # analyze the entry func
         for function in self.bv.functions:
             if function.name.endswith("::entry") and "DebugList" not in function.name:
-                self.idl = fetch_idl_anchorpy(self.bv, function)
+                pass  # IDL detection functionality removed
 
 
     def __init__(self, name, frame, data):
@@ -300,16 +297,16 @@ class LLMDecompSidebarWidget(SidebarWidget):
 
         # Keep references for updates
         self.frame = frame
-        self.bv = data 
-        self.idl = None
+        self.bv = data
 
         #current cursor
         self.here = 0
         #current function
         self.f = None
 
-        #cache of llm responses
-        self.cache = {}
+        #cache of llm responses using CacheManager
+        self.cache_manager = CacheManager()
+        self.cache = {}  # Keep memory cache for quick access
         
         # Task management to prevent multiple concurrent LLM requests
         self.current_task = None
@@ -343,8 +340,7 @@ class LLMDecompSidebarWidget(SidebarWidget):
         else:
             iface = view_frame.getCurrentViewInterface()
             self.bv = iface.getData()
-            if self.idl is None:
-                self.detect_id()
+            # IDL detection functionality removed
             self._update()
 
     # if the user moves around in the binary view, update UI
@@ -355,8 +351,12 @@ class LLMDecompSidebarWidget(SidebarWidget):
     def update_ui_func(self, func, source):
         print(f"[DEBUG] update_ui_func called for function: {func.name}, source length: {len(source)}")
         
+        # Cache in both memory and persistent storage
         if func.name not in self.cache:
             self.cache[func.name] = source
+            # Also cache to persistent storage if we have a binary view
+            if hasattr(self, 'bv') and self.bv:
+                self.cache_manager.cache_result(self.bv, func, source)
             print(f"[DEBUG] Cached result for function: {func.name}")
         else:
             print(f"[DEBUG] Function {func.name} already in cache, updating anyway")
@@ -414,8 +414,17 @@ class LLMDecompSidebarWidget(SidebarWidget):
         self.f = func
 
         # ── Cached? ──────────────────────────────────────────────────────────────
+        # First check memory cache
         if func.name in self.cache:
             self.update_ui_func(func, self.cache[func.name])
+            return
+        
+        # Then check persistent cache
+        cached_result = self.cache_manager.get_cached_result(self.bv, func)
+        if cached_result:
+            print(f"[DEBUG] Found persistent cache for function: {func.name}")
+            self.cache[func.name] = cached_result  # Also store in memory cache
+            self.update_ui_func(func, cached_result)
             return
 
         # ── Task management: prevent multiple concurrent requests ──────────────────

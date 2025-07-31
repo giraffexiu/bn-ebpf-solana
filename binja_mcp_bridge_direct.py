@@ -293,7 +293,9 @@ def get_binary_status() -> List[str]:
         return ["Error: No binary view available"]
     
     def _get_binary_status():
-        return [f"Binary: {bv.file.filename}, Architecture: {bv.arch.name}, Platform: {bv.platform.name}"]
+        arch_name = getattr(bv.arch, 'name', str(bv.arch)) if bv.arch else 'Unknown'
+        platform_name = getattr(bv.platform, 'name', str(bv.platform)) if bv.platform else 'Unknown'
+        return [f"Binary: {bv.file.filename}, Architecture: {arch_name}, Platform: {platform_name}"]
     
     return safe_execute(_get_binary_status)
 
