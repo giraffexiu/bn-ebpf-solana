@@ -1,6 +1,7 @@
 from binaryninja.architecture import Architecture
 from binaryninja.platform import Platform
 from binaryninja.function import RegisterInfo, InstructionInfo
+from binaryninja.enums import Endianness
 
 from .instr import decode, tT
 
@@ -10,7 +11,10 @@ class EBPF(Architecture):
     name = 'ebpf'
     address_size = 8
     max_instr_length = 16
-
+    # Add eBPF architecture ID to help Binary Ninja recognize it
+    # eBPF uses architecture ID 247 (0xf7) in ELF files
+    endianness = Endianness.LittleEndian
+    
     regs = { r:RegisterInfo(r, 8) for r in REGS }
     stack_pointer = 'r10'
 

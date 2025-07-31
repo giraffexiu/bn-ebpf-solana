@@ -10,7 +10,7 @@ from typing import Optional, Dict, List, Any, Tuple
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QProgressBar, QTextEdit, QCheckBox, QMessageBox, QFileDialog, 
-    QGridLayout, QGroupBox
+    QGridLayout, QGroupBox, QComboBox
 )
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtGui import QFont
@@ -114,10 +114,11 @@ class BatchRustDecompilerWorker(QThread):
     finished = Signal(dict)  # results
     error_occurred = Signal(str)  # error message
     
-    def __init__(self, binary_view: bn.BinaryView, use_cache: bool = True):
+    def __init__(self, binary_view: bn.BinaryView, use_cache: bool = True, selected_model: str = "gemini-2.5-flash"):
         super().__init__()
         self.binary_view = binary_view
         self.use_cache = use_cache
+        self.selected_model = selected_model
         self.results = {}
         self._should_stop = False
         self.cache_manager = CacheManager()
@@ -227,7 +228,7 @@ class BatchRustDecompilerWorker(QThread):
         try:
             # Use direct API with Gemini
             response = await gemini_client.aio.models.generate_content(
-                model="gemini-2.5-flash",
+                model=self.selected_model,
                 contents=prompt_content,
                 config=genai_types.GenerateContentConfig(
                     system_instruction=system_prompt,
@@ -305,11 +306,18 @@ class BatchRustDecompilerDialog(QDialog):
         config_group = QGroupBox("Configuration")
         config_layout = QGridLayout(config_group)
         
+        # Model selection
+        config_layout.addWidget(QLabel("Model:"), 0, 0)
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["gemini-2.5-flash", "gemini-2.5-pro"])
+        self.model_combo.setCurrentText("gemini-2.5-flash")
+        config_layout.addWidget(self.model_combo, 0, 1)
+        
         # Use cache
-        config_layout.addWidget(QLabel("Use Local Cache:"), 0, 0)
+        config_layout.addWidget(QLabel("Use Local Cache:"), 1, 0)
         self.use_cache_checkbox = QCheckBox()
         self.use_cache_checkbox.setChecked(True)
-        config_layout.addWidget(self.use_cache_checkbox, 0, 1)
+        config_layout.addWidget(self.use_cache_checkbox, 1, 1)
         
         layout.addWidget(config_group)
         
@@ -458,9 +466,10 @@ class BatchRustDecompilerDialog(QDialog):
             return
         
         use_cache = self.use_cache_checkbox.isChecked()
+        selected_model = self.model_combo.currentText()
         
         # Create and start worker
-        self.worker = BatchRustDecompilerWorker(self.binary_view, use_cache)
+        self.worker = BatchRustDecompilerWorker(self.binary_view, use_cache, selected_model)
         self.worker.progress_updated.connect(self._on_progress)
         self.worker.function_completed.connect(self._on_function_completed)
         self.worker.finished.connect(self._on_finished)

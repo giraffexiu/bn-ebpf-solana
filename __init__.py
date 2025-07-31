@@ -4,7 +4,10 @@ from binaryninja.types import Type, TypeBuilder
 
 
 from .ebpf import EBPF
-EBPF().register()
+
+# Register eBPF architecture first
+ebpf_arch = EBPF()
+ebpf_arch.register()
 
 class DefaultCallingConvention(CallingConvention):
     name = 'Default'
@@ -12,6 +15,7 @@ class DefaultCallingConvention(CallingConvention):
     int_return_reg = 'r0'
 
 from .solana import Solana
+# Use the registered architecture by name to ensure handle is available
 solana = Solana(Architecture['ebpf'])
 solana.default_calling_convention = DefaultCallingConvention(Architecture['ebpf'], 'default')
 solana.register('Solana')

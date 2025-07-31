@@ -1,13 +1,16 @@
 import os
+import json
+import asyncio
 from binaryninja import (
     Settings,
     BackgroundTaskThread,
     execute_on_main_thread
 )
+import binaryninja as bn
 # Use Binary Ninja's built-in Qt without importing binaryninjaui to avoid version conflicts
 from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QImage, QPainter, QFont, QColor
-from PySide6.QtWidgets import QTextEdit, QVBoxLayout
+from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QTabWidget, QWidget, QLabel, QComboBox, QProgressBar
 from binaryninjaui import (
     SidebarWidget, SidebarWidgetType, Sidebar, UIActionHandler,
     SidebarWidgetLocation, SidebarContextSensitivity
@@ -15,18 +18,16 @@ from binaryninjaui import (
 from pygments import highlight
 from pygments.lexers import RustLexer
 from pygments.formatters import HtmlFormatter
-import asyncio, json, os
-import asyncio, json
 from typing import Any, Dict
 # Removed Claude/Anthropic imports - using Gemini only
 from google import genai
 from google.genai import types as genai_types
 
-import sys, os
+import sys
 
 
 from .direct_api_interface import DirectAPIInterface
-from .batch_rust_decompiler import CacheManager
+from .batch_rust_decompiler import CacheManager, BatchRustDecompilerWorker
 
 # Fix stdout/stderr for fastmcp compatibility
 def _safe_fd():
@@ -99,9 +100,359 @@ class LLMRunner(BackgroundTaskThread):
 
 # Claude API call method removed - using Gemini only
 
+class IDLExtractorRunner(BackgroundTaskThread):
+    """Background task for extracting IDL data from Solana programs"""
+    
+    def __init__(self, sidebar_widget, output_dir, selected_model="gemini-2.5-flash"):
+        super().__init__("Extracting IDL Data", True)
+        self.sidebar_widget = sidebar_widget
+        self.output_dir = output_dir
+        self.selected_model = selected_model
+        self.bv = sidebar_widget.bv
+        self._cancelled = False
+    
+    def cancel(self):
+        """Cancel the current task"""
+        self._cancelled = True
+        super().cancel()
+    
+    def is_cancelled(self):
+        """Check if the task has been cancelled"""
+        return self._cancelled
+    
+    def run(self):
+        """Main execution method for IDL data extraction"""
+        try:
+            # Step 1: Generate Rust decompilation
+            self.progress = "Step 1/2: Generating Rust decompilation..."
+            self._update_status("Step 1/2: Generating Rust decompilation...")
+            rust_code = self._generate_rust_code()
+            
+            if self._cancelled:
+                return
+            
+            # Step 2: Extract IDL data using Gemini AI
+            self.progress = "Step 2/2: Extracting IDL data..."
+            self._update_status(f"Step 2/2: Extracting IDL with {self.selected_model}...")
+            idl_data = asyncio.run(self._extract_idl_data(rust_code))
+            
+            if self._cancelled:
+                return
+            
+            # Write IDL data to output directory
+            self._write_idl_data(idl_data)
+            
+            # Notify completion
+            execute_on_main_thread(lambda: self._on_completion_success())
+            
+        except Exception as e:
+            import traceback
+            error_msg = f"IDL extraction failed: {str(e)}"
+            print(f"[DEBUG] Full error traceback: {traceback.format_exc()}")
+            execute_on_main_thread(lambda: self._on_completion_error(error_msg))
+    
+    def _generate_rust_code(self):
+        """Generate Rust decompilation using batch decompiler"""
+        from .batch_rust_decompiler import BatchRustDecompilerWorker
+        
+        # Create temporary worker for batch decompilation
+        worker = BatchRustDecompilerWorker(self.bv, use_cache=True)
+        
+        # Run synchronously in this thread
+        worker.run()
+        
+        if self._cancelled:
+            return None
+        
+        # Get results
+        rust_results = worker.results
+        
+        # Combine all Rust code
+        combined_rust = "\n\n".join([
+            f"// Function: {name}\n{code}" 
+            for name, code in rust_results.items() 
+            if not code.startswith("Error:")
+        ])
+        
+        return combined_rust
+    
+
+    
+    async def _extract_idl_data(self, rust_code):
+        """Use Gemini AI to extract IDL data from Rust code"""
+        api_key = settings.get_string("bn-ebpf-solana.gemini_api_key")
+        
+        if not api_key:
+            raise Exception("Gemini API key not configured. Please set it in Binary Ninja settings.")
+        
+        try:
+            gemini_client = genai.Client(api_key=api_key)
+        except Exception as e:
+            raise Exception(f"Failed to create Gemini client: {e}")
+        
+        # Truncate code if too long
+        max_code_length = 100000  # Much smaller limit for IDL extraction
+        if len(rust_code) > max_code_length:
+            rust_code = rust_code[:max_code_length] + "\n// ... (code truncated)"
+        
+        # Simple prompt focused on IDL extraction
+        prompt_content = f"""Analyze this Solana program Rust code and extract IDL (Interface Definition Language) data:
+
+{rust_code}
+
+Extract and return ONLY a JSON object with the following structure:
+{{
+  "name": "program_name",
+  "version": "0.1.0",
+  "instructions": [
+    {{
+      "name": "instruction_name",
+      "accounts": [
+        {{
+          "name": "account_name",
+          "isMut": True,
+          "isSigner": False
+        }}
+      ],
+      "args": [
+        {{
+          "name": "arg_name",
+          "type": "u64"
+        }}
+      ]
+    }}
+  ],
+  "accounts": [
+    {{
+      "name": "AccountStruct",
+      "type": {{
+        "kind": "struct",
+        "fields": [
+          {{
+            "name": "field_name",
+            "type": "u64"
+          }}
+        ]
+      }}
+    }}
+  ],
+  "errors": [
+    {{
+      "code": 6000,
+      "name": "ErrorName",
+      "msg": "Error message"
+    }}
+  ]
+}}
+
+Focus on extracting:
+1. Program instructions and their parameters
+2. Account structures and their fields
+3. Error codes and messages
+4. Data types used
+
+Return ONLY the JSON, no explanations."""
+        
+        try:
+            config = genai_types.GenerateContentConfig(
+                temperature=0.1,
+                max_output_tokens=8000
+            )
+            
+            response = await gemini_client.aio.models.generate_content(
+                model=self.selected_model,
+                contents=prompt_content,
+                config=config
+            )
+            
+            if not response.text:
+                raise Exception("No response text generated from Gemini")
+            
+            # Parse JSON response
+            response_text = response.text.strip()
+            
+            # Remove markdown code blocks if present
+            if "```json" in response_text:
+                start_idx = response_text.index("```json") + 7
+                end_idx = response_text.find("```", start_idx)
+                if end_idx != -1:
+                    response_text = response_text[start_idx:end_idx].strip()
+            elif "```" in response_text:
+                start_idx = response_text.index("```") + 3
+                end_idx = response_text.find("```", start_idx)
+                if end_idx != -1:
+                    response_text = response_text[start_idx:end_idx].strip()
+            
+            # Find JSON object boundaries
+            start_brace = response_text.find('{')
+            if start_brace == -1:
+                raise json.JSONDecodeError("No opening brace found", response_text, 0)
+            
+            # Find the matching closing brace
+            brace_count = 0
+            end_brace = -1
+            for i in range(start_brace, len(response_text)):
+                if response_text[i] == '{':
+                    brace_count += 1
+                elif response_text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_brace = i
+                        break
+            
+            if end_brace == -1:
+                raise json.JSONDecodeError("No matching closing brace found", response_text, start_brace)
+            
+            # Extract and parse JSON
+            json_text = response_text[start_brace:end_brace + 1]
+            idl_data = json.loads(json_text)
+            
+            print(f"[DEBUG] Successfully extracted IDL data")
+            return idl_data
+            
+        except Exception as e:
+            print(f"[DEBUG] IDL extraction failed: {e}")
+            # Return fallback IDL structure
+            return {
+                "name": "extracted_program",
+                "version": "0.1.0",
+                "instructions": [
+                    {
+                        "name": "initialize",
+                        "accounts": [
+                            {
+                                "name": "user",
+                                "isMut": False,
+                                "isSigner": True
+                            }
+                        ],
+                        "args": []
+                    }
+                ],
+                "accounts": [],
+                "errors": []
+            }
+    
+    def _write_idl_data(self, idl_data):
+        """Write extracted IDL data to output directory"""
+        import os
+        from pathlib import Path
+        
+        print(f"[DEBUG] _write_idl_data called with idl_data type: {type(idl_data)}")
+        print(f"[DEBUG] idl_data content: {idl_data}")
+        
+        output_path = Path(self.output_dir)
+        
+        # Create IDL output directory
+        idl_dir = output_path / "extracted_idl"
+        idl_dir.mkdir(exist_ok=True)
+        
+        # Build output preview content
+        preview_content = f"🔍 IDL Extraction Results:\n"
+        preview_content += f"📂 {idl_dir}\n\n"
+        
+        # Write IDL JSON file
+        idl_file = idl_dir / "program.json"
+        with open(idl_file, 'w', encoding='utf-8') as f:
+            json.dump(idl_data, f, indent=2)
+        
+        # Add IDL summary to preview
+        preview_content += "📊 IDL Summary:\n"
+        preview_content += "═" * 50 + "\n"
+        
+        if "name" in idl_data:
+            preview_content += f"📦 Program Name: {idl_data['name']}\n"
+        
+        if "version" in idl_data:
+            preview_content += f"🏷️  Version: {idl_data['version']}\n"
+        
+        if "instructions" in idl_data:
+            instructions = idl_data["instructions"]
+            preview_content += f"⚡ Instructions: {len(instructions)}\n"
+            for i, instruction in enumerate(instructions[:5]):  # Show first 5
+                preview_content += f"   • {instruction.get('name', 'unknown')}\n"
+                if "accounts" in instruction:
+                    preview_content += f"     Accounts: {len(instruction['accounts'])}\n"
+                if "args" in instruction:
+                    preview_content += f"     Arguments: {len(instruction['args'])}\n"
+            if len(instructions) > 5:
+                preview_content += f"   ... and {len(instructions) - 5} more\n"
+        
+        if "accounts" in idl_data:
+            accounts = idl_data["accounts"]
+            preview_content += f"🏦 Account Types: {len(accounts)}\n"
+            for account in accounts[:3]:  # Show first 3
+                preview_content += f"   • {account.get('name', 'unknown')}\n"
+            if len(accounts) > 3:
+                preview_content += f"   ... and {len(accounts) - 3} more\n"
+        
+        if "errors" in idl_data:
+            errors = idl_data["errors"]
+            preview_content += f"❌ Error Codes: {len(errors)}\n"
+            for error in errors[:3]:  # Show first 3
+                preview_content += f"   • {error.get('name', 'unknown')} ({error.get('code', 'N/A')})\n"
+            if len(errors) > 3:
+                preview_content += f"   ... and {len(errors) - 3} more\n"
+        
+        preview_content += "\n"
+        
+        # Show IDL file content preview
+        preview_content += "📄 IDL File Content:\n"
+        preview_content += "═" * 50 + "\n"
+        
+        # Show formatted JSON (first 20 lines)
+        json_lines = json.dumps(idl_data, indent=2).split('\n')[:20]
+        preview_content += '\n'.join(json_lines)
+        if len(json.dumps(idl_data, indent=2).split('\n')) > 20:
+            preview_content += "\n... (truncated)"
+        
+        preview_content += f"\n\n📁 IDL file saved to: {idl_file}\n"
+        
+        # Update output preview
+        self._update_output_preview(preview_content)
+        
+        self.final_project_path = str(idl_dir)
+    
+
+    
+    def _update_status(self, message):
+        """Update status label on main thread"""
+        def update_ui():
+            self.sidebar_widget.status_label.setText(message)
+        execute_on_main_thread(update_ui)
+    
+    def _update_output_preview(self, content):
+        """Update output preview on main thread"""
+        def update_ui():
+            self.sidebar_widget.output_preview.setPlainText(content)
+        execute_on_main_thread(update_ui)
+    
+    def _on_completion_success(self):
+        """Handle successful completion"""
+        self.sidebar_widget.idl_button.setEnabled(True)
+        self.sidebar_widget.idl_button.setText("Extract IDL Data")
+        self.sidebar_widget.progress_bar.setVisible(False)
+        self.sidebar_widget.status_label.setText("✅ IDL data extracted successfully!")
+        
+        QMessageBox.information(
+            None, 
+            "Success", 
+            f"IDL data extracted successfully!\n\nOutput location: {self.final_project_path}"
+        )
+    
+    def _on_completion_error(self, error_msg):
+        """Handle error completion"""
+        self.sidebar_widget.idl_button.setEnabled(True)
+        self.sidebar_widget.idl_button.setText("Extract IDL Data")
+        self.sidebar_widget.progress_bar.setVisible(False)
+        self.sidebar_widget.status_label.setText(f"❌ Error: {error_msg}")
+        
+        QMessageBox.critical(None, "Error", error_msg)
+
 class GeminiRunner(LLMRunner):
-    def __init__(self, bar):
+    def __init__(self, bar, selected_model="gemini-2.5-flash"):
         super().__init__(bar)
+        self.selected_model = selected_model
 
     def run(self):
         """BackgroundTaskThread entry-point for Gemini."""
@@ -211,13 +562,17 @@ class GeminiRunner(LLMRunner):
         print(f"[DEBUG] Making Gemini API call for function: {func_name}")
         try:
             # Use direct API with Gemini
+            # Optimize max_output_tokens based on model capabilities
+            # Both Gemini 2.5 Flash and Pro support up to 65,535 output tokens
+            max_tokens = 8000 if "flash" in self.selected_model.lower() else 12000
+            
             response = await gemini_client.aio.models.generate_content(
-                model="gemini-2.5-flash",
+                model=self.selected_model,
                 contents=prompt_content,
                 config=genai_types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     temperature=0.3,
-                    max_output_tokens=1200
+                    max_output_tokens=max_tokens
                 )
             )
             print(f"[DEBUG] Gemini API call completed for function: {func_name}")
@@ -312,19 +667,88 @@ class LLMDecompSidebarWidget(SidebarWidget):
         self.current_task = None
         self.pending_function = None
 
-        # The editor will render HTML
+        # Create tab widget for two main functionalities
+        self.tab_widget = QTabWidget()
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # Tab 1: Cursor-based Decompilation (Original functionality)
+        # ═══════════════════════════════════════════════════════════════════════
+        self.decompile_tab = QWidget()
+        
+        # The editor will render HTML for decompiled code
         self.editor = QTextEdit()
         self.editor.setReadOnly(False)
-
         self.editor.setStyleSheet("""
             background:transparent;
             color:inherit;
             font-family: monospace;
         """)
         self.editor.setFrameStyle(0)
-
+        
+        # Layout for decompilation tab
+        decompile_layout = QVBoxLayout()
+        decompile_layout.addWidget(QLabel("Cursor-based Rust Decompilation:"))
+        decompile_layout.addWidget(self.editor)
+        self.decompile_tab.setLayout(decompile_layout)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # Tab 2: IDL Data Extraction
+        # ═══════════════════════════════════════════════════════════════════════
+        self.idl_tab = QWidget()
+        
+        # Model selection
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(QLabel("Model:"))
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["gemini-2.5-flash", "gemini-2.5-pro"])
+        self.model_combo.setCurrentText("gemini-2.5-flash")
+        model_layout.addWidget(self.model_combo)
+        model_layout.addStretch()
+        
+        # Extract button
+        self.idl_button = QPushButton("Extract IDL Data")
+        self.idl_button.clicked.connect(self._extract_idl_data_ui)
+        self.idl_button.setToolTip("Extract IDL (Interface Definition Language) data from decompiled Solana program")
+        
+        # Output preview area
+        self.output_preview = QTextEdit()
+        self.output_preview.setReadOnly(True)
+        self.output_preview.setStyleSheet("""
+            background: #2b2b2b;
+            color: #ffffff;
+            font-family: monospace;
+            border: 1px solid #555;
+        """)
+        self.output_preview.setPlaceholderText("Extracted IDL data will appear here...")
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        
+        # Status label
+        self.status_label = QLabel("Ready to extract IDL data")
+        self.status_label.setStyleSheet("color: #888; font-style: italic;")
+        
+        # Layout for IDL tab
+        idl_layout = QVBoxLayout()
+        idl_layout.addWidget(QLabel("IDL Data Extraction:"))
+        idl_layout.addLayout(model_layout)
+        idl_layout.addWidget(self.idl_button)
+        idl_layout.addWidget(self.progress_bar)
+        idl_layout.addWidget(self.status_label)
+        idl_layout.addWidget(QLabel("Output Preview:"))
+        idl_layout.addWidget(self.output_preview)
+        self.idl_tab.setLayout(idl_layout)
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # Add tabs to tab widget
+        # ═══════════════════════════════════════════════════════════════════════
+        self.tab_widget.addTab(self.decompile_tab, "Decompile")
+        self.tab_widget.addTab(self.idl_tab, "IDL Extraction")
+        
+        # Main layout
         layout = QVBoxLayout()
-        layout.addWidget(self.editor)
+        layout.addWidget(self.tab_widget)
         self.setLayout(layout)
 
         # If we already have a BinaryView, render immediately
@@ -441,9 +865,49 @@ class LLMDecompSidebarWidget(SidebarWidget):
         # ── Kick off background LLM job ───────────────────────────────────────
         self.pending_function = func
         print(f"[DEBUG] Starting Gemini decompilation for function: {func.name}")
-        task = GeminiRunner(self)
+        # Get selected model from UI
+        selected_model = self.model_combo.currentText()
+        task = GeminiRunner(self, selected_model)
         
         self.current_task = task
+        task.start()
+
+    def _extract_idl_data_ui(self):
+        """Extract IDL data from decompiled Solana program"""
+        if not self.bv:
+            QMessageBox.warning(None, "Warning", "No binary view available")
+            return
+            
+        # Check API key
+        api_key = settings.get_string("bn-ebpf-solana.gemini_api_key")
+        if not api_key:
+            QMessageBox.warning(None, "API Key Required", 
+                              "Please configure your Gemini API key in the plugin settings.")
+            return
+        
+        # Step 1: Choose output directory
+        output_dir = QFileDialog.getExistingDirectory(
+            None, 
+            "Select Output Directory for IDL Data",
+            os.path.expanduser("~")
+        )
+        
+        if not output_dir:
+            return
+            
+        # Get selected model
+        selected_model = self.model_combo.currentText()
+        
+        # Update UI state
+        self.idl_button.setEnabled(False)
+        self.idl_button.setText("Extracting...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # Indeterminate progress
+        self.status_label.setText(f"Starting IDL extraction with {selected_model}...")
+        self.output_preview.clear()
+        
+        # Start the IDL extraction process in background
+        task = IDLExtractorRunner(self, output_dir, selected_model)
         task.start()
 
     def contextMenuEvent(self, event):

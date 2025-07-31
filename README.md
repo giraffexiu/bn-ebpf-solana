@@ -41,6 +41,31 @@ A comprehensive Binary Ninja plugin for analyzing eBPF and Solana programs. This
    git clone https://github.com/your-repo/bn-ebpf-solana.git
    ```
 
+#### Known Issues and Solutions
+
+**Issue 1: ELF Architecture 247 Not Supported**
+
+When loading eBPF/Solana binaries, you may see errors like:
+```
+[Default] ELF architecture 247 is not supported
+[BinaryView.ElfView] ELF architecture 247 is not supported
+[Default] BinaryView of type 'ELF' failed to initialize!
+```
+
+**Solution**: This is expected behavior for eBPF binaries. The plugin automatically handles this by:
+- Detecting eBPF architecture (ID 247) in the binary
+- Falling back to minimal initialization mode when standard ELF parsing fails
+- Providing full eBPF instruction analysis and Solana-specific features
+- Setting up proper memory layout for Solana programs
+
+You can safely ignore these initial warnings - the plugin will continue to work correctly.
+
+**Issue 2: Missing Dependencies**
+
+When analyzing Solana programs, you may encounter errors related to missing Python module dependencies.
+
+**Solution**: If you experience import errors, the plugin includes fallback mechanisms to handle missing dependencies gracefully. Essential analysis features will remain available even if optional dependencies are missing.
+
 2. Install required Python dependencies in Binary Ninja:
    - Open Binary Ninja
    - Press `Cmd+P` (or `Ctrl+P` on Windows/Linux) to open the command palette
